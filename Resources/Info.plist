@@ -3,11 +3,11 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>Claude Session Monitor</string>
+    <string>Tokenomics</string>
     <key>CFBundleDisplayName</key>
-    <string>Claude Session Monitor</string>
+    <string>Tokenomics</string>
     <key>CFBundleIdentifier</key>
-    <string>dev.local.claude-session-monitor</string>
+    <string>dev.local.tokenomics</string>
     <key>CFBundleVersion</key>
     <string>1.0</string>
     <key>CFBundleShortVersionString</key>
@@ -15,7 +15,7 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleExecutable</key>
-    <string>ClaudeSessionMonitor</string>
+    <string>Tokenomics</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>LSUIElement</key>
@@ -23,6 +23,6 @@
     <key>NSHumanReadableCopyright</key>
     <string>Personal tool — no distribution.</string>
     <key>NSAppleEventsUsageDescription</key>
-    <string>Claude Session Monitor uses Automation to ask Ghostty which tab is open in a given project directory, so it can bring that tab to the front when you click a session.</string>
+    <string>Tokenomics uses Automation to ask Ghostty which tab is open in a given project directory, so it can bring that tab to the front when you click a session.</string>
 </dict>
 </plist>
