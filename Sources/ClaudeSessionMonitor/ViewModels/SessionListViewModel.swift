@@ -1,0 +1,287 @@
+import AppKit
+import Foundation
+
+/// Drives the session list: owns the transcript scan, the usage refresh, the per-second UI tick, and
+/// the notification/banner triggers. Everything here is @MainActor per spec.md §7.
+@MainActor
+final class SessionListViewModel: ObservableObject {
+    @Published private(set) var sessions: [Session] = []
+    @Published private(set) var now: Date = .init()
+    @Published private(set) var dependencyWarnings: [String] = []
+
+    let settings: SettingsStore
+    let ghostty: TerminalController
+
+    private let watcher: TranscriptWatcher
+    private let usage = UsageService()
+    private let rtk = RTKService()
+    private let notifications = NotificationService()
+    private let banners = BannerPresenter()
+    private let processMatcher = ProcessMatcher()
+    let detailPanel = DetailPanelPresenter()
+
+    /// Resolved once via WindowAccessor in MenuContentView — MenuBarExtra's `.window` style otherwise
+    /// gives no handle on the dropdown's own NSWindow, which `detailPanel` needs to position itself.
+    var hostWindow: NSWindow?
+
+    private var tickTask: Task<Void, Never>?
+    private var pollTask: Task<Void, Never>?
+    private var hoverTask: Task<Void, Never>?
+    private var pointerOverRow = false
+    private var pointerOverPanel = false
+
+    init(settings: SettingsStore = .shared, ghostty: TerminalController = GhosttyController()) {
+        self.settings = settings
+        self.ghostty = ghostty
+        self.watcher = TranscriptWatcher()
+
+        notifications.requestAuthorizationIfNeeded()
+
+        watcher.onChange = { [weak self] in
+            Task { await self?.rescan() }
+        }
+        watcher.startWatching()
+
+        startTicking()
+        startPolling()
+        Task { await rescan() }
+    }
+
+    deinit {
+        tickTask?.cancel()
+        pollTask?.cancel()
+    }
+
+    // MARK: - Timers
+
+    private func startTicking() {
+        tickTask = Task { [weak self] in
+            while !Task.isCancelled {
+                self?.tick()
+                try? await Task.sleep(for: .seconds(1))
+            }
+        }
+    }
+
+    private func startPolling() {
+        pollTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                try? await Task.sleep(for: .seconds(self.settings.refreshIntervalSeconds))
+                await self.rescan()
+            }
+        }
+    }
+
+    /// The cheap per-second tick: recompute countdowns from already-cached lastTurnTime, no file I/O.
+    private func tick() {
+        now = Date()
+        checkNotifications()
+    }
+
+    // MARK: - Rescan (file watch / 15s timer)
+
+    func rescan() async {
+        let scanned = watcher.scanAll()
+        await usage.refresh()
+
+        var withCost = scanned
+        for i in withCost.indices {
+            withCost[i].cost = await usage.cost(forSessionID: withCost[i].id)
+        }
+
+        await ghostty.refreshAvailability()
+        await processMatcher.refresh()
+        await rtk.refresh(workingDirectories: withCost.map(\.workingDirectory))
+        for i in withCost.indices {
+            withCost[i].livePIDs = await processMatcher.pids(forWorkingDirectory: withCost[i].workingDirectory)
+            withCost[i].rtkStats = await rtk.stats(forWorkingDirectory: withCost[i].workingDirectory)
+        }
+
+        // Drop sessions whose process has exited — requested directly: a transcript alone doesn't mean the
+        // session is still reachable. Guarded on processMatcher actually having found *some* live `claude`
+        // process at all: if `pgrep`/`lsof` failed outright (missing binary, unexpected sandboxing), every
+        // session would read as "not running" and this filter would silently empty the whole list, which
+        // is worse than the stale-but-visible status it replaces.
+        let anyProcessDetected = withCost.contains { $0.isProcessRunning }
+        if anyProcessDetected {
+            withCost = withCost.filter { $0.isProcessRunning }
+        }
+
+        let ttlFallback = settings.ttl
+        let currentNow = now
+        // Warm/expiring-soon sessions always sort above cold ones, soonest-to-expire first. Within cold
+        // sessions, sort by most-recently-active first — otherwise, once the list includes weeks of
+        // history (see recencyWindow above), plain "remaining ascending" would put the *oldest* dead
+        // session at the very top (its remaining time is the most negative), burying anything relevant.
+        sessions = withCost.sorted { a, b in
+            let aRemaining = a.remaining(now: currentNow, ttl: a.effectiveTTL(fallback: ttlFallback))
+            let bRemaining = b.remaining(now: currentNow, ttl: b.effectiveTTL(fallback: ttlFallback))
+            let aCold = aRemaining <= 0
+            let bCold = bRemaining <= 0
+            if aCold != bCold { return !aCold }
+            return aCold ? a.lastTurnTime > b.lastTurnTime : aRemaining < bRemaining
+        }
+
+        var warnings: [String] = []
+        if await usage.isAvailable == false {
+            warnings.append(await usage.unavailableReason ?? "ccusage unavailable")
+        }
+        if settings.ghosttyFocusEnabled && !ghostty.isAvailable {
+            warnings.append("Ghostty automation not authorized — focus action disabled")
+        }
+        if !sessions.isEmpty, await rtk.isAvailable == false {
+            warnings.append("No token-savings CLI (e.g. rtk) found — consider installing one to track Bash token savings")
+        }
+        dependencyWarnings = warnings
+
+        // No console/UI elsewhere surfaces this for a menu-bar-only app — run the built .app from
+        // Terminal (see README "Debugging") to see per-scan session counts and warnings.
+        FileHandle.standardError.write(
+            "[ClaudeSessionMonitor] scan: \(sessions.count) session(s), warnings: \(warnings)\n".data(using: .utf8)!
+        )
+    }
+
+    // MARK: - Notifications / banners
+
+    /// How much extra runway to give a session before warning, on top of the user's base lead-time
+    /// setting — requested directly, scaled by two signals: how much there was to read last time (more
+    /// text → assume more reading time before the user could plausibly act) and how long it's been since
+    /// the user was actually looking at this tab (longer away → they haven't started reading yet, so the
+    /// warning needs to land early enough that there's still time once they do look back). Both are rough
+    /// heuristics, not measured reading behavior, so each is capped to keep a huge response or a long-idle
+    /// tab from blowing the lead time out to something absurd.
+    private func adaptiveLeadTime(for session: Session) -> TimeInterval {
+        let base = settings.notifyLeadTimeSeconds
+        // ~15 chars/sec is a conservative skim-reading pace (well above the ~180-250wpm typical range).
+        let readingSeconds = min(240, Double(session.lastVisibleCharCount ?? 0) / 15)
+        let idleSeconds = ghostty.timeSinceLastActive(workingDirectory: session.workingDirectory) ?? 0
+        let idleBuffer = min(120, idleSeconds / 10)
+        return base + readingSeconds + idleBuffer
+    }
+
+    private func checkNotifications() {
+        guard settings.notifyBeforeCold else { return }
+        for session in sessions {
+            let ttl = session.effectiveTTL(fallback: settings.ttl)
+            let remaining = session.remaining(now: now, ttl: ttl)
+            let leadTime = adaptiveLeadTime(for: session)
+            notifications.notifyIfNeeded(session: session, remaining: remaining, leadTime: leadTime)
+            if remaining > 0 && remaining <= leadTime {
+                banners.presentIfNeeded(
+                    session: session, remaining: remaining,
+                    onSwitch: { [weak self] in Task { await self?.focus(session) } },
+                    onHandoff: { [weak self] in Task { await self?.pasteCommand("/handoff", into: session) } },
+                    onPing: { [weak self] in Task { await self?.ping(session) } }
+                )
+            }
+        }
+    }
+
+    // MARK: - Focus / paste actions
+
+    func focus(_ session: Session) async {
+        guard settings.ghosttyFocusEnabled, ghostty.isAvailable else { return }
+        try? await ghostty.focusTab(workingDirectory: session.workingDirectory)
+    }
+
+    /// Pastes (never executes — see GhosttyController) a command like `/handoff` or `/compact` into the
+    /// session's terminal and focuses it, so the user reviews and runs it themselves.
+    func pasteCommand(_ text: String, into session: Session) async {
+        guard settings.ghosttyFocusEnabled, ghostty.isAvailable else { return }
+        try? await ghostty.pasteText(text, workingDirectory: session.workingDirectory)
+    }
+
+    /// "Ping" is a nop keep-alive: unlike /handoff (asks for a real summary) or /compact (does real work),
+    /// this pastes a trivial question so the session's next turn just writes fresh cache without the LLM
+    /// doing anything — for when all you want is to push the TTL back out, not actually continue the task.
+    static let pingPrompt = "Are you still there? Answer yes/no."
+
+    func ping(_ session: Session) async {
+        await pasteCommand(Self.pingPrompt, into: session)
+    }
+
+    // MARK: - Hover detail panel
+
+    /// Debounced like a native submenu: a brief hover-intent delay before showing (so passing the mouse
+    /// over several rows on the way to one doesn't flash a panel per row).
+    ///
+    /// The panel sits a few points to the right of the row with a gap of "dead space" the mouse has to
+    /// cross to reach it. An earlier version scheduled a hide purely from the row's own hover-exit, which
+    /// fired — and won — the moment the mouse left the row on its way toward the panel, so the buttons
+    /// inside (Focus Tab / Paste /handoff / Paste /compact) were never reachable. Fixed by tracking
+    /// `pointerOverRow` and `pointerOverPanel` (the latter reported by the panel itself, see
+    /// DetailPanelPresenter/SessionDetailPanelView) independently and only hiding once *neither* is true.
+    func rowHoverChanged(_ session: Session, isHovering: Bool, hasOpenTab: Bool) {
+        pointerOverRow = isHovering
+        if isHovering {
+            hoverTask?.cancel()
+            hoverTask = Task { [weak self] in
+                try? await Task.sleep(for: .milliseconds(300))
+                guard !Task.isCancelled, let self, self.pointerOverRow else { return }
+                self.detailPanel.show(
+                    session: session, settings: self.settings, hasOpenTab: hasOpenTab,
+                    timeSinceLastActive: self.ghostty.timeSinceLastActive(workingDirectory: session.workingDirectory),
+                    anchorWindow: self.hostWindow,
+                    onFocus: { Task { await self.focus(session) } },
+                    onPasteCommand: { text in Task { await self.pasteCommand(text, into: session) } },
+                    onPing: { Task { await self.ping(session) } },
+                    onHoverChanged: { [weak self] hovering in self?.panelHoverChanged(hovering) }
+                )
+            }
+        } else {
+            scheduleHideIfUnhovered()
+        }
+    }
+
+    private func panelHoverChanged(_ isHovering: Bool) {
+        pointerOverPanel = isHovering
+        if isHovering {
+            hoverTask?.cancel()
+        } else {
+            scheduleHideIfUnhovered()
+        }
+    }
+
+    private func scheduleHideIfUnhovered() {
+        hoverTask?.cancel()
+        hoverTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled, let self else { return }
+            guard !self.pointerOverRow, !self.pointerOverPanel else { return }
+            self.detailPanel.hide()
+        }
+    }
+
+    // MARK: - Menu bar presentation
+
+    var barTitle: String? {
+        guard let soonest = sessions.first else { return nil }
+        let ttl = soonest.effectiveTTL(fallback: settings.ttl)
+        let remaining = soonest.remaining(now: now, ttl: ttl)
+        guard remaining > 0 else { return nil }
+        return "⏱ " + Self.format(remaining)
+    }
+
+    /// How far back a session's last turn can be and still count toward the menu bar icon's tint. Needed
+    /// because the session list spans up to 24h (see TranscriptWatcher.recencyWindow): without this, a
+    /// project untouched for hours would keep painting the icon red, which isn't useful "worst current
+    /// status" information — it's just old news.
+    private let overallStatusRelevanceWindow: TimeInterval = 3600
+
+    var overallStatus: CacheStatus? {
+        let relevant = sessions.filter { now.timeIntervalSince($0.lastTurnTime) < overallStatusRelevanceWindow }
+        guard !relevant.isEmpty else { return nil }
+        let statuses = relevant.map {
+            $0.status(now: now, ttl: $0.effectiveTTL(fallback: settings.ttl), expiringSoonThreshold: settings.expiringSoonThresholdSeconds)
+        }
+        if statuses.contains(where: { $0 == .cold }) { return .cold }
+        if statuses.contains(where: { $0 == .expiringSoon }) { return .expiringSoon }
+        return .warm
+    }
+
+    static func format(_ interval: TimeInterval) -> String {
+        let total = max(0, Int(interval))
+        return String(format: "%d:%02d", total / 60, total % 60)
+    }
+}

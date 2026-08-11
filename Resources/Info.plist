@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>Claude Session Monitor</string>
+    <key>CFBundleDisplayName</key>
+    <string>Claude Session Monitor</string>
+    <key>CFBundleIdentifier</key>
+    <string>dev.local.claude-session-monitor</string>
+    <key>CFBundleVersion</key>
+    <string>1.0</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleExecutable</key>
+    <string>ClaudeSessionMonitor</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.0</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSHumanReadableCopyright</key>
+    <string>Personal tool — no distribution.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Claude Session Monitor uses Automation to ask Ghostty which tab is open in a given project directory, so it can bring that tab to the front when you click a session.</string>
+</dict>
+</plist>

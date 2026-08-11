@@ -1,0 +1,123 @@
+import SwiftUI
+
+/// One row in the dropdown (spec.md §3). Tapping a row focuses the matching Ghostty tab when available —
+/// this is also how the "switch windows/tabs to that session" behavior is exposed from the dropdown, not
+/// just from the expiry banner. Hovering shows a flyout detail panel beside the dropdown (see
+/// DetailPanelPresenter) with categorized tool/plugin usage, session facts, and the same paste/focus
+/// actions; right-click keeps a plain context menu as a redundant fast path for the same actions.
+///
+/// `hasOpenTab` is a real per-session cross-reference against Ghostty's currently open terminals (see
+/// GhosttyController.hasOpenTab), not just "is Ghostty running" — a session with no matching tab shows no
+/// focus affordance rather than a button that would silently no-op.
+struct SessionRowView: View {
+    let session: Session
+    let now: Date
+    let settings: SettingsStore
+    let hasOpenTab: Bool
+    let onFocus: () -> Void
+    let onPasteCommand: (String) -> Void
+    let onPing: () -> Void
+    let onHoverChanged: (Bool) -> Void
+
+    @State private var isHighlighted = false
+
+    private var ttl: TimeInterval { session.effectiveTTL(fallback: settings.ttl) }
+    private var remaining: TimeInterval { session.remaining(now: now, ttl: ttl) }
+    private var status: CacheStatus {
+        session.status(now: now, ttl: ttl, expiringSoonThreshold: settings.expiringSoonThresholdSeconds)
+    }
+
+    /// Native menus paint every row's text solid white the moment it's the highlighted (blue) row,
+    /// regardless of that text's usual hierarchy — no dimmed "secondary" tone survives the highlight.
+    private func fg(_ base: Color) -> Color {
+        isHighlighted ? .white : base
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(status.color)
+                .frame(width: 8, height: 8)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 4) {
+                    Text(session.projectName)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(fg(.primary))
+                        .lineLimit(1)
+                        .layoutPriority(1)
+                    if let aiTitle = session.aiTitle {
+                        Text(aiTitle)
+                            .font(.system(size: 12))
+                            .foregroundStyle(fg(.secondary))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                }
+
+                HStack(spacing: 6) {
+                    Text(countdownText)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(fg(.secondary))
+                    if session.detectedTTL != nil {
+                        Text("auto")
+                            .font(.system(size: 9))
+                            .foregroundStyle(fg(.secondary))
+                            .help("TTL detected from this session's own cache_creation usage, not the global setting")
+                    }
+                    Text(hitRatioText)
+                        .font(.system(size: 11))
+                        .foregroundStyle(fg(.secondary))
+                }
+            }
+
+            Spacer()
+
+            Text(costText)
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundStyle(fg(.primary))
+
+            if hasOpenTab {
+                Image(systemName: "arrow.forward.circle")
+                    .foregroundStyle(fg(.secondary))
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .contentShape(Rectangle())
+        .background(isHighlighted ? Color.accentColor : Color.clear)
+        .onHover { hovering in
+            isHighlighted = hovering
+            onHoverChanged(hovering)
+        }
+        .onTapGesture {
+            guard hasOpenTab else { return }
+            onFocus()
+        }
+        .contextMenu {
+            Button("Focus Tab", action: onFocus)
+                .disabled(!hasOpenTab)
+            Divider()
+            Button("Paste /handoff") { onPasteCommand("/handoff") }
+                .disabled(!hasOpenTab)
+            Button("Paste /compact") { onPasteCommand("/compact") }
+                .disabled(!hasOpenTab)
+            Button("Ping (\"still there?\")", action: onPing)
+                .disabled(!hasOpenTab)
+        }
+    }
+
+    private var countdownText: String {
+        remaining > 0 ? SessionListViewModel.format(remaining) : "cold"
+    }
+
+    private var hitRatioText: String {
+        guard let ratio = session.cacheHitRatio else { return "—" }
+        return String(format: "%.0f%% hit", ratio * 100)
+    }
+
+    private var costText: String {
+        guard let cost = session.cost else { return "—" }
+        return String(format: "$%.2f", cost)
+    }
+}
