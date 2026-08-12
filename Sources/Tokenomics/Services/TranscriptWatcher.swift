@@ -258,13 +258,29 @@ final class TranscriptWatcher {
                 }
             } else if let blocks = message["content"] as? [[String: Any]] {
                 // A message made only of tool_result blocks is Claude Code feeding a tool's output back
-                // mid-turn, not a new user turn — leave the existing (running) state alone.
+                // mid-turn, not a new user turn — leave the existing (running) state alone, except when
+                // that "existing state" is .waitingForInput: a tool_result at that point is specifically
+                // the answer to the pending AskUserQuestion/ExitPlanMode, so processing has resumed.
                 let isPureToolResult = !blocks.isEmpty && blocks.allSatisfy { ($0["type"] as? String) == "tool_result" }
-                if !isPureToolResult {
+                if !isPureToolResult || activity == .waitingForInput {
                     activity = .running
                 }
             }
+        } else if type == "assistant", activity == .running,
+                  let message = obj["message"] as? [String: Any],
+                  let content = message["content"] as? [[String: Any]],
+                  content.contains(where: blocksOnUserInput) {
+            activity = .waitingForInput
         }
+    }
+
+    /// Tool calls that hand control back to a human instead of running unattended: a clarifying question
+    /// (`AskUserQuestion`) or a plan awaiting approval (`ExitPlanMode`). Confirmed tool names by grepping
+    /// real transcripts for `tool_use` blocks. Once one of these is the open turn's latest action, nothing
+    /// happens until a person responds — the CLI itself is idle, waiting, not "thinking."
+    private static func blocksOnUserInput(_ block: [String: Any]) -> Bool {
+        guard block["type"] as? String == "tool_use", let name = block["name"] as? String else { return false }
+        return name == "AskUserQuestion" || name == "ExitPlanMode"
     }
 
     private static func commandName(from content: String) -> String? {

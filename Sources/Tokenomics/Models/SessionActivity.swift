@@ -14,12 +14,18 @@ enum SessionActivity: Sendable, Equatable {
     /// transcript file entirely while it runs (see TranscriptWatcher), so this can be the only new
     /// information a poll picks up for minutes at a time.
     case compacting
+    /// The open turn's most recent tool call was an `AskUserQuestion` or `ExitPlanMode` — Claude Code is
+    /// blocked on a human decision, not doing any work, until a `tool_result` answers it. Worth
+    /// distinguishing from `.running`: a long wait here means "go answer Claude," not "let it keep
+    /// working." See TranscriptWatcher.updateActivity for how this is detected.
+    case waitingForInput
 
     var label: String {
         switch self {
         case .idle: return "idle"
         case .running: return "running"
         case .compacting: return "compacting"
+        case .waitingForInput: return "needs input"
         }
     }
 
@@ -28,6 +34,7 @@ enum SessionActivity: Sendable, Equatable {
         case .idle: return .secondary
         case .running: return .blue
         case .compacting: return .purple
+        case .waitingForInput: return .orange
         }
     }
 
@@ -36,6 +43,7 @@ enum SessionActivity: Sendable, Equatable {
         case .idle: return ""
         case .running: return "bolt.fill"
         case .compacting: return "arrow.triangle.2.circlepath"
+        case .waitingForInput: return "questionmark.circle.fill"
         }
     }
 }
