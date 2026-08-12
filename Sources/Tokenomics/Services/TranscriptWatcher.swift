@@ -80,6 +80,21 @@ final class TranscriptWatcher {
         var lastVisibleCharCount: Int?
         var activity: SessionActivity = .idle
         var compactionStartedAt: Date?
+
+        // Cold-cache rewrite detection (see CacheExpiryEvent). A single API call emits multiple JSONL
+        // lines that all repeat the same `usage` object (one per content block: text, thinking, tool_use)
+        // — confirmed by inspecting real transcripts — so token counts and gaps must be deduped by
+        // `requestId` or every turn is counted several times. This also fixes the cache totals below, which
+        // previously summed the duplicated lines (harmless for the read/write *ratio*, but wrong as raw
+        // counts).
+        var seenRequestIDs = Set<String>()
+        var expiryEvents: [CacheExpiryEvent] = []
+        var lastTurnAt: Date?          // timestamp of the previous *deduped* assistant turn
+        var sawEarlierCacheActivity = false  // gates out the unavoidable first cache write of a session
+        // "Big tool dump" tracking: the largest single tool_result still loaded in context. Reset to 0
+        // whenever a `/compact` or `/clear` clears context (handled in updateActivity, same places the
+        // cache totals reset), since a compacted-away dump no longer inflates later turns.
+        var maxLoadedToolResultChars = 0
         // Name of the slash command currently in flight (parsed from a "<command-name>/x</command-name>"
         // echo), so that when its closing `local_command` event arrives we know *which* command just
         // finished — only `/clear` resets the accumulators below.
@@ -127,8 +142,27 @@ final class TranscriptWatcher {
                 for: obj, lastTimestamp: lastTimestamp,
                 activity: &activity, compactionStartedAt: &compactionStartedAt, pendingCommandName: &pendingCommandName,
                 cacheCreation: &cacheCreation, cacheRead: &cacheRead,
-                toolUsage: &toolUsage, lastVisibleCharCount: &lastVisibleCharCount
+                toolUsage: &toolUsage, lastVisibleCharCount: &lastVisibleCharCount,
+                maxLoadedToolResultChars: &maxLoadedToolResultChars
             )
+
+            // Measure tool_result payloads (user events feeding a tool's output back) for the big-dump
+            // signal, before the assistant-only guard below drops the user event. `content` is usually a
+            // string; occasionally an array of blocks (e.g. image results) whose text parts we sum.
+            if obj["type"] as? String == "user", let message = obj["message"] as? [String: Any],
+               let blocks = message["content"] as? [[String: Any]] {
+                for block in blocks where block["type"] as? String == "tool_result" {
+                    let length: Int
+                    if let text = block["content"] as? String {
+                        length = text.count
+                    } else if let parts = block["content"] as? [[String: Any]] {
+                        length = parts.compactMap { $0["text"] as? String }.reduce(0) { $0 + $1.count }
+                    } else {
+                        length = 0
+                    }
+                    maxLoadedToolResultChars = max(maxLoadedToolResultChars, length)
+                }
+            }
 
             guard obj["type"] as? String == "assistant", let message = obj["message"] as? [String: Any] else { continue }
 
@@ -157,8 +191,17 @@ final class TranscriptWatcher {
 
             guard let usage = message["usage"] as? [String: Any] else { continue }
 
-            cacheCreation += (usage["cache_creation_input_tokens"] as? Int) ?? 0
-            cacheRead += (usage["cache_read_input_tokens"] as? Int) ?? 0
+            // Dedupe by requestId: the same API call repeats its `usage` across several JSONL lines, so
+            // counting every line would multiply the totals (see the comment on `seenRequestIDs`). Fall
+            // back to a per-line key when no requestId is present, which just means "count this line once".
+            let requestKey = (obj["requestId"] as? String) ?? (message["id"] as? String)
+            if let requestKey, seenRequestIDs.contains(requestKey) { continue }
+            if let requestKey { seenRequestIDs.insert(requestKey) }
+
+            let turnCreation = (usage["cache_creation_input_tokens"] as? Int) ?? 0
+            let turnRead = (usage["cache_read_input_tokens"] as? Int) ?? 0
+            cacheCreation += turnCreation
+            cacheRead += turnRead
 
             // Ground truth for the TTL in effect on this turn, when Claude Code reports it.
             if let creation = usage["cache_creation"] as? [String: Any] {
@@ -170,6 +213,25 @@ final class TranscriptWatcher {
                     lastDetectedTTL = 300
                 }
             }
+
+            // Cold-cache rewrite detection. The unambiguous signal (verified against real transcripts):
+            // a turn following an idle gap longer than the TTL shows cache_read == 0 and re-writes the
+            // whole prefix as cache_creation, whereas a warm turn shows a large cache_read and a tiny
+            // creation. Require all three — a gap over the TTL, zero read, and a substantial write — plus
+            // `sawEarlierCacheActivity` so the session's unavoidable *first* write is never counted as
+            // waste. The gap requirement also rules out mid-session model switches (which zero the read but
+            // happen with no idle gap).
+            let turnTTL = lastDetectedTTL ?? 300
+            if let turnTime = lastTimestamp, let previous = lastTurnAt,
+               sawEarlierCacheActivity,
+               turnRead == 0, turnCreation >= 1024,
+               turnTime.timeIntervalSince(previous) > turnTTL {
+                expiryEvents.append(CacheExpiryEvent(
+                    time: turnTime, wastedTokens: turnCreation, model: lastModel, ttl: turnTTL
+                ))
+            }
+            if turnCreation > 0 || turnRead > 0 { sawEarlierCacheActivity = true }
+            if let turnTime = lastTimestamp { lastTurnAt = turnTime }
         }
 
         let resolvedCwd = workingDirectory ?? Self.inferWorkingDirectory(from: url)
@@ -198,6 +260,8 @@ final class TranscriptWatcher {
             activity: activity,
             compactionStartedAt: compactionStartedAt,
             detectedTTL: lastDetectedTTL,
+            expiryEvents: expiryEvents,
+            loadedToolResultChars: maxLoadedToolResultChars > 0 ? maxLoadedToolResultChars : nil,
             cost: nil
         )
     }
@@ -216,7 +280,8 @@ final class TranscriptWatcher {
         for obj: [String: Any], lastTimestamp: Date?,
         activity: inout SessionActivity, compactionStartedAt: inout Date?, pendingCommandName: inout String?,
         cacheCreation: inout Int, cacheRead: inout Int,
-        toolUsage: inout ToolUsage, lastVisibleCharCount: inout Int?
+        toolUsage: inout ToolUsage, lastVisibleCharCount: inout Int?,
+        maxLoadedToolResultChars: inout Int
     ) {
         guard let type = obj["type"] as? String else { return }
 
@@ -231,6 +296,8 @@ final class TranscriptWatcher {
                 // The old cache prefix no longer reflects what's actually loaded post-compaction.
                 cacheCreation = 0
                 cacheRead = 0
+                // Compaction drops bulky tool output first, so any big dump is no longer loaded.
+                maxLoadedToolResultChars = 0
             case "local_command":
                 activity = .idle
                 compactionStartedAt = nil
@@ -239,6 +306,7 @@ final class TranscriptWatcher {
                     cacheRead = 0
                     toolUsage = ToolUsage()
                     lastVisibleCharCount = nil
+                    maxLoadedToolResultChars = 0
                 }
                 pendingCommandName = nil
             default:

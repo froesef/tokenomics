@@ -8,6 +8,13 @@ struct MenuContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // Today's savings/waste meter, above the session list — only rendered when there's something
+            // to show (see MeterStripView / SavingsMeter).
+            if viewModel.meter.hasLoss || viewModel.meter.hasSavings {
+                MeterStripView(meter: viewModel.meter)
+                Divider()
+            }
+
             if viewModel.sessions.isEmpty {
                 Text("No active coding sessions found")
                     .foregroundStyle(.secondary)
