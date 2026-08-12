@@ -2,12 +2,12 @@
 import PackageDescription
 
 let package = Package(
-    name: "ClaudeSessionMonitor",
+    name: "Tokenomics",
     platforms: [.macOS(.v14)],
     targets: [
         .executableTarget(
-            name: "ClaudeSessionMonitor",
-            path: "Sources/ClaudeSessionMonitor"
+            name: "Tokenomics",
+            path: "Sources/Tokenomics"
         )
     ]
 )

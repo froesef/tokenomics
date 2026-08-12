@@ -76,7 +76,7 @@ open Package.swift
 Then build from the command line with:
 
 ```bash
-xcodebuild -scheme ClaudeSessionMonitor -destination 'platform=macOS' build
+xcodebuild -scheme Tokenomics -destination 'platform=macOS' build
 ```
 
 If the scheme name differs, `xcodebuild -list` from this directory shows the generated scheme name to
@@ -93,7 +93,7 @@ use instead.
 
 ## Debugging
 
-The app writes one line per scan to stderr: `[ClaudeSessionMonitor] scan: N session(s), warnings: [...]`.
+The app writes one line per scan to stderr: `[Tokenomics] scan: N session(s), warnings: [...]`.
 Nothing else surfaces this for a menu-bar-only app with no console, so if the dropdown looks wrong, run
 it from Terminal to see it directly:
 

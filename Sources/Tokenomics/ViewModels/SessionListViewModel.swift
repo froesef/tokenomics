@@ -209,7 +209,7 @@ final class SessionListViewModel: ObservableObject {
         // No console/UI elsewhere surfaces this for a menu-bar-only app — run the built .app from
         // Terminal (see README "Debugging") to see per-scan session counts and warnings.
         FileHandle.standardError.write(
-            "[ClaudeSessionMonitor] scan: \(sessions.count) session(s), warnings: \(warnings)\n".data(using: .utf8)!
+            "[Tokenomics] scan: \(sessions.count) session(s), warnings: \(warnings)\n".data(using: .utf8)!
         )
     }
 
@@ -335,7 +335,7 @@ final class SessionListViewModel: ObservableObject {
     private func fireKeepAlivePing(for session: Session) {
         keepAlive.recordFireAttempted(for: session.id, now: now)
         FileHandle.standardError.write(
-            "[ClaudeSessionMonitor] keep-alive: firing for \(session.projectName)\n".data(using: .utf8)!
+            "[Tokenomics] keep-alive: firing for \(session.projectName)\n".data(using: .utf8)!
         )
         Task { [weak self] in
             guard let self else { return }
@@ -343,12 +343,12 @@ final class SessionListViewModel: ObservableObject {
                 try await self.ghostty.pasteTextAndSubmit(Self.autoKeepAlivePrompt, workingDirectory: session.workingDirectory, aiTitle: session.aiTitle)
                 self.keepAlive.recordFireSucceeded(for: session.id)
                 FileHandle.standardError.write(
-                    "[ClaudeSessionMonitor] keep-alive: succeeded for \(session.projectName)\n".data(using: .utf8)!
+                    "[Tokenomics] keep-alive: succeeded for \(session.projectName)\n".data(using: .utf8)!
                 )
             } catch {
                 self.keepAlive.recordFireFailed(for: session.id)
                 FileHandle.standardError.write(
-                    "[ClaudeSessionMonitor] keep-alive: failed for \(session.projectName): \(error)\n".data(using: .utf8)!
+                    "[Tokenomics] keep-alive: failed for \(session.projectName): \(error)\n".data(using: .utf8)!
                 )
             }
         }
