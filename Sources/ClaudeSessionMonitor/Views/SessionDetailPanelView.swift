@@ -82,6 +82,7 @@ struct SessionDetailPanelView: View {
             if let version = session.version {
                 infoRow("CLI version", version)
             }
+            infoRow("Activity", activityText)
             infoRow("TTL", "\(Int(ttl / 60)) min (\(session.detectedTTL != nil ? "detected" : "global"))")
             infoRow("Last turn", Self.lastTurnFormatter.string(from: session.lastTurnTime))
             infoRow("Cache", "\(session.cacheCreationTokens) created / \(session.cacheReadTokens) read")
@@ -101,6 +102,13 @@ struct SessionDetailPanelView: View {
             }
             infoRow("Last active", lastActiveText)
         }
+    }
+
+    private var activityText: String {
+        guard session.activity == .compacting, let started = session.compactionStartedAt else {
+            return session.activity.label
+        }
+        return "compacting (\(Int(Date().timeIntervalSince(started)))s so far)"
     }
 
     private func rtkSavingsText(_ stats: RTKStats) -> String {

@@ -49,6 +49,14 @@ struct Session: Identifiable, Equatable, Sendable {
     /// that field also counts invisible thinking tokens, which were never something the user had to read.
     let lastVisibleCharCount: Int?
 
+    /// Whether this session is currently idle, mid-turn, or mid-compaction — see SessionActivity and
+    /// TranscriptWatcher.parseActivity for how this is inferred (there's no explicit "in progress" event
+    /// in the transcript).
+    let activity: SessionActivity
+    /// When the open `/compact` was submitted, only set while `activity == .compacting` — lets the UI show
+    /// how long compaction has been running. Nil otherwise (including once `compact_boundary` closes it).
+    let compactionStartedAt: Date?
+
     /// TTL actually observed on this session's most recent cache-writing turn, read straight from the
     /// transcript's `usage.cache_creation.ephemeral_{1h,5m}_input_tokens` fields. When present this is
     /// ground truth for that turn, not a heuristic guess — see README "Deviations from spec.md".

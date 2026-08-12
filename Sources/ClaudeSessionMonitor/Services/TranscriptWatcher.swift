@@ -78,6 +78,12 @@ final class TranscriptWatcher {
         var lastEffort: String?
         var lastVersion: String?
         var lastVisibleCharCount: Int?
+        var activity: SessionActivity = .idle
+        var compactionStartedAt: Date?
+        // Name of the slash command currently in flight (parsed from a "<command-name>/x</command-name>"
+        // echo), so that when its closing `local_command` event arrives we know *which* command just
+        // finished — only `/clear` resets the accumulators below.
+        var pendingCommandName: String?
 
         let iso = ISO8601DateFormatter()
         iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -116,6 +122,13 @@ final class TranscriptWatcher {
                     toolUsage.hooks[String(name), default: 0] += 1
                 }
             }
+
+            Self.updateActivity(
+                for: obj, lastTimestamp: lastTimestamp,
+                activity: &activity, compactionStartedAt: &compactionStartedAt, pendingCommandName: &pendingCommandName,
+                cacheCreation: &cacheCreation, cacheRead: &cacheRead,
+                toolUsage: &toolUsage, lastVisibleCharCount: &lastVisibleCharCount
+            )
 
             guard obj["type"] as? String == "assistant", let message = obj["message"] as? [String: Any] else { continue }
 
@@ -177,9 +190,83 @@ final class TranscriptWatcher {
             effort: lastEffort,
             version: lastVersion,
             lastVisibleCharCount: lastVisibleCharCount,
+            activity: activity,
+            compactionStartedAt: compactionStartedAt,
             detectedTTL: lastDetectedTTL,
             cost: nil
         )
+    }
+
+    /// Infers idle/running/compacting purely from event *order* in the file (not timestamp order — a
+    /// finished `/compact` flushes several events at once, backdated to when each logically happened, so
+    /// the boundary-closing event isn't always the last-timestamped one). Confirmed against real
+    /// transcripts: a plain user turn opens on the `user` message and closes on `system/turn_duration`;
+    /// `/compact` opens on a bare `"/compact"` user message (written the instant it's submitted, before
+    /// compaction starts) and closes on `system/compact_boundary` — the file receives *nothing* in
+    /// between, for the entire compaction duration, since Claude Code batches the boundary, the
+    /// continuation summary, and the command echo/stdout together once it's done. `/clear` (and every
+    /// other slash command) opens on its `<command-name>` echo and closes near-instantly on
+    /// `system/local_command`.
+    private static func updateActivity(
+        for obj: [String: Any], lastTimestamp: Date?,
+        activity: inout SessionActivity, compactionStartedAt: inout Date?, pendingCommandName: inout String?,
+        cacheCreation: inout Int, cacheRead: inout Int,
+        toolUsage: inout ToolUsage, lastVisibleCharCount: inout Int?
+    ) {
+        guard let type = obj["type"] as? String else { return }
+
+        if type == "system" {
+            switch obj["subtype"] as? String {
+            case "turn_duration":
+                activity = .idle
+                compactionStartedAt = nil
+            case "compact_boundary":
+                activity = .idle
+                compactionStartedAt = nil
+                // The old cache prefix no longer reflects what's actually loaded post-compaction.
+                cacheCreation = 0
+                cacheRead = 0
+            case "local_command":
+                activity = .idle
+                compactionStartedAt = nil
+                if pendingCommandName == "/clear" {
+                    cacheCreation = 0
+                    cacheRead = 0
+                    toolUsage = ToolUsage()
+                    lastVisibleCharCount = nil
+                }
+                pendingCommandName = nil
+            default:
+                break
+            }
+        } else if type == "user", let message = obj["message"] as? [String: Any] {
+            if let content = message["content"] as? String {
+                let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmed == "/compact" {
+                    activity = .compacting
+                    compactionStartedAt = lastTimestamp
+                } else if let name = commandName(from: trimmed) {
+                    pendingCommandName = name
+                    activity = .running
+                } else {
+                    activity = .running
+                }
+            } else if let blocks = message["content"] as? [[String: Any]] {
+                // A message made only of tool_result blocks is Claude Code feeding a tool's output back
+                // mid-turn, not a new user turn — leave the existing (running) state alone.
+                let isPureToolResult = !blocks.isEmpty && blocks.allSatisfy { ($0["type"] as? String) == "tool_result" }
+                if !isPureToolResult {
+                    activity = .running
+                }
+            }
+        }
+    }
+
+    private static func commandName(from content: String) -> String? {
+        guard let start = content.range(of: "<command-name>")?.upperBound,
+              let end = content.range(of: "</command-name>")?.lowerBound,
+              start < end else { return nil }
+        return String(content[start..<end]).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Best-effort fallback when no event in the transcript carries a `cwd` field: reverses the

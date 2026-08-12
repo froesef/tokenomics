@@ -16,6 +16,10 @@ before that happens.
 - **Hover for full detail**: working directory, TTL source, last-turn time, raw token counts, model and
   reasoning effort, CLI version, whether a live `claude` process was actually found, and which tools /
   MCP plugins / Skills / hooks that session used.
+- **Idle / running / compacting badge per row** — inferred from transcript structure (no explicit "in
+  progress" flag exists), so a session mid-turn or mid-`/compact` is visibly distinct from one that's just
+  sitting idle. A `/clear` (or `/compact`) resets that row's cache and tool-usage stats in place, since the
+  old numbers no longer reflect what's actually loaded.
 - **Click a row to focus the matching Ghostty tab** — only offered when a real matching tab exists.
 - **Right-click (or the hover panel) for `/handoff`, `/compact`, and a no-op "Ping"** — these paste into
   the terminal as if typed, never run automatically.
