@@ -21,6 +21,7 @@ struct SessionRowView: View {
     let onFocus: () -> Void
     let onPasteCommand: (String) -> Void
     let onPing: () -> Void
+    let onOpenInCodex: () -> Void
     let onToggleKeepAlive: () -> Void
     let onHoverChanged: (Bool) -> Void
 
@@ -31,6 +32,7 @@ struct SessionRowView: View {
     private var status: CacheStatus {
         session.status(now: now, ttl: ttl, expiringSoonThreshold: settings.expiringSoonThresholdSeconds)
     }
+    private var canOpenInCodex: Bool { session.agentKind == .codex && session.codexThreadURL != nil }
 
     /// Native menus paint every row's text solid white the moment it's the highlighted (blue) row,
     /// regardless of that text's usual hierarchy — no dimmed "secondary" tone survives the highlight.
@@ -41,7 +43,7 @@ struct SessionRowView: View {
     var body: some View {
         HStack(spacing: 8) {
             Circle()
-                .fill(status.color)
+                .fill(statusColor)
                 .frame(width: 8, height: 8)
 
             AgentIcon(kind: session.agentKind, size: 12)
@@ -67,7 +69,7 @@ struct SessionRowView: View {
                     Text(countdownText)
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundStyle(fg(.secondary))
-                    if session.detectedTTL != nil {
+                    if session.supportsCacheCountdown && session.detectedTTL != nil {
                         Text("auto")
                             .font(.system(size: 9))
                             .foregroundStyle(fg(.secondary))
@@ -76,7 +78,7 @@ struct SessionRowView: View {
                     Text(hitRatioText)
                         .font(.system(size: 11))
                         .foregroundStyle(fg(.secondary))
-                    if keepAliveInfo.enabled {
+                    if session.supportsCacheCountdown && keepAliveInfo.enabled {
                         keepAliveBadge
                     }
                 }
@@ -88,8 +90,8 @@ struct SessionRowView: View {
                 .font(.system(size: 12, design: .monospaced))
                 .foregroundStyle(fg(.primary))
 
-            if hasOpenTab {
-                Image(systemName: "arrow.forward.circle")
+            if hasOpenTab || canOpenInCodex {
+                Image(systemName: canOpenInCodex ? "arrow.up.forward.app" : "arrow.forward.circle")
                     .foregroundStyle(fg(.secondary))
             }
         }
@@ -102,23 +104,34 @@ struct SessionRowView: View {
             onHoverChanged(hovering)
         }
         .onTapGesture(count: 2) {
-            guard hasOpenTab else { return }
-            onFocus()
+            if canOpenInCodex {
+                onOpenInCodex()
+            } else if hasOpenTab {
+                onFocus()
+            }
         }
         .contextMenu {
-            Button("Focus Tab", action: onFocus)
-                .disabled(!hasOpenTab)
-            Divider()
-            Button("Paste /handoff") { onPasteCommand("/handoff") }
-                .disabled(!hasOpenTab)
-            Button("Paste /compact") { onPasteCommand("/compact") }
-                .disabled(!hasOpenTab)
-            Button("Ping (\"still there?\")", action: onPing)
-                .disabled(!hasOpenTab)
-            Divider()
-            Button(keepAliveMenuTitle, action: onToggleKeepAlive)
-                .disabled(!hasOpenTab)
+            if canOpenInCodex {
+                Button("Open in Codex", action: onOpenInCodex)
+            } else {
+                Button("Focus Tab", action: onFocus)
+                    .disabled(!hasOpenTab)
+                Divider()
+                Button("Paste /handoff") { onPasteCommand("/handoff") }
+                    .disabled(!hasOpenTab)
+                Button("Paste /compact") { onPasteCommand("/compact") }
+                    .disabled(!hasOpenTab)
+                Button("Ping (\"still there?\")", action: onPing)
+                    .disabled(!hasOpenTab)
+                Divider()
+                Button(keepAliveMenuTitle, action: onToggleKeepAlive)
+                    .disabled(!hasOpenTab)
+            }
         }
+    }
+
+    private var statusColor: Color {
+        session.supportsCacheCountdown ? status.color : .blue
     }
 
     /// Shown for every row, including idle — requested directly, so all three states read at a glance
@@ -159,16 +172,25 @@ struct SessionRowView: View {
     }
 
     private var countdownText: String {
-        remaining > 0 ? SessionListViewModel.format(remaining) : "cold"
+        guard session.supportsCacheCountdown else { return "last \(ageText)" }
+        return remaining > 0 ? SessionListViewModel.format(remaining) : "cold"
     }
 
     private var hitRatioText: String {
         guard let ratio = session.cacheHitRatio else { return "—" }
-        return String(format: "%.0f%% hit", ratio * 100)
+        return String(format: session.agentKind == .codex ? "%.0f%% cached" : "%.0f%% hit", ratio * 100)
     }
 
     private var costText: String {
+        guard session.agentKind == .claudeCode else { return "" }
         guard let cost = session.cost else { return "—" }
         return String(format: "$%.2f", cost)
+    }
+
+    private var ageText: String {
+        let seconds = max(0, Int(now.timeIntervalSince(session.lastTurnTime)))
+        if seconds < 60 { return "\(seconds)s ago" }
+        if seconds < 3600 { return "\(seconds / 60)m ago" }
+        return "\(seconds / 3600)h ago"
     }
 }

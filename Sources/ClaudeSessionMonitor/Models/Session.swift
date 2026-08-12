@@ -1,5 +1,17 @@
 import Foundation
 
+enum AgentKind: Equatable, Sendable {
+    case claudeCode
+    case codex
+
+    var displayName: String {
+        switch self {
+        case .claudeCode: return "Claude Code"
+        case .codex: return "Codex"
+        }
+    }
+}
+
 /// What a session actually used, parsed from `tool_use` blocks in the transcript's assistant messages —
 /// surfaced so a user can see what's making a session efficient (or not): leaning on plugins/skills vs.
 /// brute-forcing everything through Bash, etc.
@@ -21,13 +33,13 @@ struct ToolUsage: Equatable, Sendable {
     var isEmpty: Bool { builtInTools.isEmpty && mcpServers.isEmpty && skills.isEmpty && hooks.isEmpty }
 }
 
-/// One Claude Code session: one transcript file, one working directory, one independent prompt-cache
-/// TTL timer (the cache is scoped per working directory — see spec.md §0).
+/// One coding-agent session: one transcript file or rollout, one working directory, and any cache usage
+/// metadata the source format exposes.
 struct Session: Identifiable, Equatable, Sendable {
     let id: String
     /// Which coding agent wrote this session's transcript — see AgentIcon.swift. Always `.claudeCode`
-    /// today since TranscriptWatcher only reads Claude Code's transcript format, but kept on the model
-    /// (rather than assumed by the views) so a future agent-specific watcher has somewhere to report it.
+    /// for Claude transcripts and `.codex` for local Codex rollouts, kept on the model rather than
+    /// assumed by the views so each watcher can report its source explicitly.
     var agentKind: AgentKind = .claudeCode
     let workingDirectory: String
     /// Claude Code's own AI-generated summary of what the session is doing (from the transcript's
@@ -37,6 +49,13 @@ struct Session: Identifiable, Equatable, Sendable {
     let lastTurnTime: Date
     let cacheCreationTokens: Int
     let cacheReadTokens: Int
+    /// Codex token totals from `event_msg/token_count` records. For OpenAI usage, `input_tokens` already
+    /// includes cached input; `cached_input_tokens` is the discounted subset. Claude Code rows leave these
+    /// nil because their transcript exposes cache-write/cache-read counters instead.
+    let totalInputTokens: Int?
+    let cachedInputTokens: Int?
+    let outputTokens: Int?
+    let reasoningOutputTokens: Int?
     let toolUsage: ToolUsage
     /// Model id (e.g. "claude-sonnet-5") and reasoning-effort level (e.g. "high") from the most recent
     /// assistant turn — read straight from the transcript (`message.model` / top-level `effort` on each
@@ -82,6 +101,13 @@ struct Session: Identifiable, Equatable, Sendable {
 
     var isProcessRunning: Bool { !livePIDs.isEmpty }
 
+    var supportsCacheCountdown: Bool { agentKind == .claudeCode }
+
+    var codexThreadURL: URL? {
+        guard agentKind == .codex else { return nil }
+        return URL(string: "codex://threads/\(id)")
+    }
+
     var projectName: String {
         (workingDirectory as NSString).lastPathComponent
     }
@@ -92,6 +118,10 @@ struct Session: Identifiable, Equatable, Sendable {
     }
 
     var cacheHitRatio: Double? {
+        if agentKind == .codex {
+            guard let totalInputTokens, totalInputTokens > 0 else { return nil }
+            return Double(cachedInputTokens ?? 0) / Double(totalInputTokens)
+        }
         let total = cacheCreationTokens + cacheReadTokens
         guard total > 0 else { return nil }
         return Double(cacheReadTokens) / Double(total)

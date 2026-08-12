@@ -1,12 +1,18 @@
 # Tokenomics
 
-A macOS menu bar app that shows every [Claude Code](https://code.claude.com) session's prompt-cache
-countdown, cost, and cache-hit ratio in real time, and can focus the matching Ghostty tab.
+A macOS menu bar app that shows local coding-agent sessions: [Claude Code](https://code.claude.com)
+prompt-cache countdowns, costs, and cache-hit ratios, plus Codex cached-input token usage from local
+session rollouts.
 
 Each project directory you run Claude Code in gets its own independent prompt cache with its own TTL.
 Once that cache goes cold, the next turn reprocesses the full context uncached — expensive, and easy to
 miss if a session sits idle in a background tab. Tokenomics watches every session at once and warns you
 before that happens.
+
+Codex tracking is observe-only: Tokenomics reads local `~/.codex` JSONL session rollouts and shows model,
+last activity, token totals, and cached-input ratio. Codex rows do **not** show a prompt-cache expiry
+countdown, because Codex's local transcript exposes cached-token usage but not an exact cache-expiry
+timestamp.
 
 ## Features
 
@@ -14,6 +20,8 @@ before that happens.
   every session from the last 24h, sorted with warm/expiring sessions always above cold ones.
 - **Cost per session**, via [`ccusage`](https://github.com/ryoppippi/ccusage). **Cache-hit ratio per
   session**, computed directly from the transcript's own token counts — no `ccusage` involved.
+- **Codex session rows** — cached-input ratio, raw input/output/reasoning token totals, model, effort,
+  CLI version, and a safe "Open in Codex" action via the documented `codex://threads/<id>` deep link.
 - **Hover for full detail**: working directory, TTL source, last-turn time, raw token counts, model and
   reasoning effort, CLI version, whether a live `claude` process was actually found, and which tools /
   MCP plugins / Skills / hooks that session used.
@@ -23,7 +31,7 @@ before that happens.
   old numbers no longer reflect what's actually loaded.
 - **Click a row to focus the matching Ghostty tab** — only offered when a real matching tab exists.
 - **Right-click (or the hover panel) for `/handoff`, `/compact`, and a no-op "Ping"** — these paste into
-  the terminal as if typed, never run automatically.
+  Claude Code's terminal as if typed, never run automatically.
 - **Warnings before a session goes cold**: a top-of-screen banner plus a system notification, with
   quick-action buttons, timed to scale with how much there is to read and how long you've been away.
 - **Settings window** (TTL threshold, refresh interval, notification lead time, Ghostty toggle), separate
@@ -81,7 +89,7 @@ use instead.
   grant it later via System Settings → Privacy & Security → Automation → Tokenomics → Ghostty.
 - **Notifications:** requested once on launch (only inside a real `.app` bundle — see above). Denial
   degrades gracefully; no in-app countdown functionality depends on it.
-- No other permissions are used. The app never writes to `~/.claude`.
+- No other permissions are used. The app never writes to `~/.claude` or `~/.codex`.
 
 ## Debugging
 

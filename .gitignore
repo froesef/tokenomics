@@ -11,6 +11,10 @@
 *.xcodeproj/xcuserdata/
 DerivedData/
 
+# Local agent state and worktrees
+.claude/
+.worktrees/
+
 # Editor
 .vscode/*
 !.vscode/settings.json

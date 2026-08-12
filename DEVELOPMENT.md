@@ -276,7 +276,18 @@ root-owned cache files — a pre-existing local `npm` issue, not something this 
       content width went from 360pt (clipping) to 340pt then, per direct follow-up that text was still
       cut off, to 440pt; and `.windowResizability(.contentSize)` on the `Settings` scene (`App.swift`)
       stops the window from being resized below that width at all, so the same clipping can't recur.
-25. **`xcodebuild` build step not executed.** Full Xcode isn't installed in the build environment (only
+25. **Codex sessions are now observed, but not mutated.** Requested directly after asking whether Codex
+    instances should also be tracked. `CodexSessionWatcher` scans recent `.jsonl` rollouts under
+    `~/.codex` and parses only structural/session fields (`session_meta`, `turn_context`,
+    `event_msg/token_count`, and function-call names). It deliberately never opens credential files and
+    never writes Codex metadata. Real local rollouts expose `input_tokens`, `cached_input_tokens`,
+    `output_tokens`, and `reasoning_output_tokens`, so Codex rows show cached-input ratio and raw token
+    totals. They do **not** show a TTL countdown, because the Codex transcript gives observed cache usage
+    but no exact cache-expiry timestamp. Codex row actions are similarly read/open-only: "Open in Codex"
+    uses the documented `codex://threads/<thread-id>` deep link. App-server can technically mutate stored
+    thread metadata such as `isPinned`, but Tokenomics does not auto-pin, rename, archive, or otherwise
+    mark Codex sessions from the outside.
+26. **`xcodebuild` build step not executed.** Full Xcode isn't installed in the build environment (only
     Command Line Tools). `swift build -c release` was run successfully and is the verified build path;
     the `xcodebuild` command in the README is the documented equivalent per Apple's SPM-as-Xcode-project
     support but wasn't run there.
@@ -291,6 +302,7 @@ Sources/ClaudeSessionMonitor/
   Models/Session.swift
   Models/CacheStatus.swift
   Services/TranscriptWatcher.swift
+  Services/CodexSessionWatcher.swift
   Services/UsageService.swift
   Services/NotificationService.swift
   Services/GhosttyController.swift
