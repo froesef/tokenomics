@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 @main
-struct ClaudeSessionMonitorApp: App {
+struct TokenomicsApp: App {
     @StateObject private var viewModel = SessionListViewModel()
 
     init() {

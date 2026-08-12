@@ -9,7 +9,7 @@ cd "$(dirname "$0")/.."
 echo "==> swift build -c release"
 swift build -c release
 
-BIN_NAME="ClaudeSessionMonitor"
+BIN_NAME="Tokenomics"
 APP_NAME="Tokenomics"
 APP_BUNDLE=".build/${APP_NAME}.app"
 BIN_PATH=".build/release/${BIN_NAME}"

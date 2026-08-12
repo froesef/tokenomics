@@ -297,7 +297,7 @@ root-owned cache files — a pre-existing local `npm` issue, not something this 
 Matches `spec.md` §7 with one addition (`Services/SettingsStore.swift`, see deviation #9):
 
 ```
-Sources/ClaudeSessionMonitor/
+Sources/Tokenomics/
   App.swift
   Models/Session.swift
   Models/CacheStatus.swift

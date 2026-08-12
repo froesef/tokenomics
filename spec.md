@@ -101,7 +101,7 @@ Minimal, persisted via `UserDefaults`:
 ## 7. Suggested source layout
 
 ```
-ClaudeSessionMonitor/
+Tokenomics/
   App.swift                 // @main, MenuBarExtra, app lifecycle, LSUIElement
   Models/
     Session.swift           // struct: id, workingDir, projectName, lastTurn, tokens, cost, status

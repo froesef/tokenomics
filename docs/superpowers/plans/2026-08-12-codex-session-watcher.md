@@ -22,10 +22,10 @@
 
 **Files:**
 - Modify: `Package.swift`
-- Create: `Tests/ClaudeSessionMonitorTests/CodexSessionWatcherTests.swift`
-- Create: `Sources/ClaudeSessionMonitor/Services/CodexSessionWatcher.swift`
-- Modify: `Sources/ClaudeSessionMonitor/Models/Session.swift`
-- Modify: `Sources/ClaudeSessionMonitor/Services/TranscriptWatcher.swift`
+- Create: `Tests/TokenomicsTests/CodexSessionWatcherTests.swift`
+- Create: `Sources/Tokenomics/Services/CodexSessionWatcher.swift`
+- Modify: `Sources/Tokenomics/Models/Session.swift`
+- Modify: `Sources/Tokenomics/Services/TranscriptWatcher.swift`
 
 **Interfaces:**
 - Produces: `CodexSessionWatcher.init(codexHome: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex"))`
@@ -83,11 +83,11 @@ Expected: PASS.
 ### Task 2: App Integration
 
 **Files:**
-- Modify: `Sources/ClaudeSessionMonitor/ViewModels/SessionListViewModel.swift`
-- Modify: `Sources/ClaudeSessionMonitor/Views/MenuContentView.swift`
-- Modify: `Sources/ClaudeSessionMonitor/Views/SessionRowView.swift`
-- Modify: `Sources/ClaudeSessionMonitor/Views/SessionDetailPanelView.swift`
-- Modify: `Sources/ClaudeSessionMonitor/App.swift`
+- Modify: `Sources/Tokenomics/ViewModels/SessionListViewModel.swift`
+- Modify: `Sources/Tokenomics/Views/MenuContentView.swift`
+- Modify: `Sources/Tokenomics/Views/SessionRowView.swift`
+- Modify: `Sources/Tokenomics/Views/SessionDetailPanelView.swift`
+- Modify: `Sources/Tokenomics/App.swift`
 
 **Interfaces:**
 - Consumes: `CodexSessionWatcher.scanAll() -> [Session]`
@@ -115,7 +115,7 @@ Expected: PASS.
 **Files:**
 - Modify: `README.md`
 - Modify: `TOKEN_TIPS.md`
-- Modify: `Sources/ClaudeSessionMonitor/Views/TokenTipsView.swift`
+- Modify: `Sources/Tokenomics/Views/TokenTipsView.swift`
 - Modify: `DEVELOPMENT.md`
 
 **Interfaces:**
