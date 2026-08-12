@@ -8,12 +8,20 @@ struct MenuContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Today's savings/waste meter, above the session list — only rendered when there's something
-            // to show (see MeterStripView / SavingsMeter).
+            // Today's savings/waste meter, above the session list, with the manual refresh button inline
+            // in its first row — only rendered when there's something to show (see MeterStripView /
+            // SavingsMeter). Falls back to a bare refresh row when there's nothing to report.
             if viewModel.meter.hasLoss || viewModel.meter.hasSavings {
-                MeterStripView(meter: viewModel.meter)
-                Divider()
+                MeterStripView(meter: viewModel.meter, onRefresh: { await viewModel.rescan() })
+            } else {
+                HStack {
+                    Spacer()
+                    RefreshButtonView(action: { await viewModel.rescan() })
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
             }
+            Divider()
 
             if viewModel.sessions.isEmpty {
                 Text("No active coding sessions found")
