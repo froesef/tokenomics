@@ -27,6 +27,13 @@ struct ClaudeSessionMonitorApp: App {
             SettingsView(settings: viewModel.settings)
         }
         .windowResizability(.contentSize)
+
+        // Opened from FooterView via `openWindow(id: "token-tips")`, same activate-then-open
+        // pattern as Settings above. Scrollable content (TokenTipsView), so no .contentSize here.
+        Window("Token Optimization", id: "token-tips") {
+            TokenTipsView()
+        }
+        .windowResizability(.contentSize)
     }
 }
 

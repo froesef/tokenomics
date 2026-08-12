@@ -10,7 +10,9 @@ import SwiftUI
 struct FooterView: View {
     @ObservedObject var viewModel: SessionListViewModel
     @Environment(\.openSettings) private var openSettings
+    @Environment(\.openWindow) private var openWindow
     @State private var hoveringSettings = false
+    @State private var hoveringTokenTips = false
     @State private var hoveringQuit = false
 
     var body: some View {
@@ -36,6 +38,15 @@ struct FooterView: View {
             }
             .buttonStyle(.plain)
             .onHover { hoveringSettings = $0 }
+
+            Button {
+                NSApp.activate(ignoringOtherApps: true)
+                openWindow(id: "token-tips")
+            } label: {
+                MenuRowLabel(title: "Token optimization…", isHovering: hoveringTokenTips)
+            }
+            .buttonStyle(.plain)
+            .onHover { hoveringTokenTips = $0 }
 
             Button {
                 NSApplication.shared.terminate(nil)
