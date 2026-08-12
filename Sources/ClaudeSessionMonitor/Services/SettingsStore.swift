@@ -33,6 +33,15 @@ final class SettingsStore: ObservableObject {
     @Published var keepAliveMaxPings60m: Double {
         didSet { UserDefaults.standard.set(keepAliveMaxPings60m, forKey: Keys.keepAliveMaxPings60m) }
     }
+    /// When on, every session with time left on its cache gets its per-session Auto Keep-Alive switched
+    /// on automatically — requested directly, so a session doesn't go cold for lack of a manual toggle
+    /// just because the user forgot, or a new session was never touched. See
+    /// `SessionListViewModel.enableKeepAliveForActiveSessions`, which applies this both immediately when
+    /// switched on and on every rescan thereafter (so a session that later becomes active also picks it
+    /// up), while still respecting each session's own ping cap above.
+    @Published var keepAliveAllActiveSessions: Bool {
+        didSet { UserDefaults.standard.set(keepAliveAllActiveSessions, forKey: Keys.keepAliveAllActiveSessions) }
+    }
 
     /// Fallback TTL used only when a session has no per-turn `detectedTTL` yet (see
     /// `Session.effectiveTTL`) — e.g. before its first cache-writing turn. Not a user-facing setting: the
@@ -51,6 +60,7 @@ final class SettingsStore: ObservableObject {
         static let ghosttyFocusEnabled = "ghosttyFocusEnabled"
         static let keepAliveMaxPings5m = "keepAliveMaxPings5m"
         static let keepAliveMaxPings60m = "keepAliveMaxPings60m"
+        static let keepAliveAllActiveSessions = "keepAliveAllActiveSessions"
     }
 
     private init() {
@@ -62,5 +72,6 @@ final class SettingsStore: ObservableObject {
         ghosttyFocusEnabled = (d.object(forKey: Keys.ghosttyFocusEnabled) as? Bool) ?? true
         keepAliveMaxPings5m = (d.object(forKey: Keys.keepAliveMaxPings5m) as? Double) ?? 10
         keepAliveMaxPings60m = (d.object(forKey: Keys.keepAliveMaxPings60m) as? Double) ?? 3
+        keepAliveAllActiveSessions = (d.object(forKey: Keys.keepAliveAllActiveSessions) as? Bool) ?? false
     }
 }

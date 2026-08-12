@@ -71,6 +71,9 @@ struct SessionRowView: View {
                     Text(hitRatioText)
                         .font(.system(size: 11))
                         .foregroundStyle(fg(.secondary))
+                    if keepAliveInfo.enabled {
+                        keepAliveBadge
+                    }
                 }
             }
 
@@ -126,6 +129,20 @@ struct SessionRowView: View {
                 .font(.system(size: 9, weight: .medium))
         }
         .foregroundStyle(isHighlighted ? .white : session.activity.color)
+    }
+
+    /// Shown only while on, next to the hit-ratio text — requested directly, so which sessions are being
+    /// kept alive automatically is visible at a glance in the list itself, not just via right-click or
+    /// the hover detail panel.
+    private var keepAliveBadge: some View {
+        HStack(spacing: 2) {
+            Image(systemName: "bolt.fill")
+                .font(.system(size: 8))
+            Text("\(keepAliveInfo.remainingPings)")
+                .font(.system(size: 9))
+        }
+        .foregroundStyle(isHighlighted ? .white : .blue)
+        .help("Auto Keep-Alive on — \(keepAliveInfo.pingsUsed)/\(keepAliveInfo.maxPings) pings used")
     }
 
     /// Automatic keep-alive stays available to switch on even with a full budget used up — the counter
