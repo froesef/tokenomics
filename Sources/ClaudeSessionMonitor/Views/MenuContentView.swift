@@ -9,7 +9,7 @@ struct MenuContentView: View {
     var body: some View {
         VStack(spacing: 0) {
             if viewModel.sessions.isEmpty {
-                Text("No active Claude Code sessions found")
+                Text("No active coding sessions found")
                     .foregroundStyle(.secondary)
                     .padding()
             } else {

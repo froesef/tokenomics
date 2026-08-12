@@ -25,6 +25,10 @@ struct ToolUsage: Equatable, Sendable {
 /// TTL timer (the cache is scoped per working directory — see spec.md §0).
 struct Session: Identifiable, Equatable, Sendable {
     let id: String
+    /// Which coding agent wrote this session's transcript — see AgentIcon.swift. Always `.claudeCode`
+    /// today since TranscriptWatcher only reads Claude Code's transcript format, but kept on the model
+    /// (rather than assumed by the views) so a future agent-specific watcher has somewhere to report it.
+    var agentKind: AgentKind = .claudeCode
     let workingDirectory: String
     /// Claude Code's own AI-generated summary of what the session is doing (from the transcript's
     /// `ai-title` event) — the same short label it uses as the Ghostty tab title. Nil until Claude Code

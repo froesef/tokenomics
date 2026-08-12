@@ -58,8 +58,11 @@ struct SessionDetailPanelView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(session.projectName)
-                .font(.system(size: 13, weight: .semibold))
+            HStack(spacing: 6) {
+                AgentIcon(kind: session.agentKind, size: 16)
+                Text(session.projectName)
+                    .font(.system(size: 13, weight: .semibold))
+            }
             if let aiTitle = session.aiTitle {
                 Text(aiTitle)
                     .font(.system(size: 11))
@@ -76,6 +79,7 @@ struct SessionDetailPanelView: View {
     private var sessionInfoSection: some View {
         VStack(alignment: .leading, spacing: 4) {
             sectionTitle("Session")
+            infoRow("Agent", session.agentKind.displayName)
             if let model = session.model {
                 infoRow("Model", model)
             }

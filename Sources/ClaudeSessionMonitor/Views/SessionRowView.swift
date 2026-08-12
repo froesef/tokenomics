@@ -41,6 +41,8 @@ struct SessionRowView: View {
                 .fill(status.color)
                 .frame(width: 8, height: 8)
 
+            AgentIcon(kind: session.agentKind, size: 12)
+
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 4) {
                     Text(session.projectName)
