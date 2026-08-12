@@ -6,6 +6,9 @@ import SwiftUI
 /// (see Pricing / SavingsMeter). Hover either figure for the breakdown.
 struct MeterStripView: View {
     let meter: SavingsMeter
+    /// Manual refresh action, rendered inline at the trailing edge of whichever row appears first —
+    /// keeps it in the same row rather than opening a dedicated row just for the button.
+    let onRefresh: () async -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -36,6 +39,7 @@ struct MeterStripView: View {
             Text(meter.expiryCount == 1 ? "1 expiration" : "\(meter.expiryCount) expirations")
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)
+            RefreshButtonView(action: onRefresh)
         }
         .help("Tokens re-written because a session's prompt cache went cold after sitting idle past its TTL. "
             + "Keep working in a session (or use Auto Keep-Alive) before it goes cold to avoid this. "
@@ -55,6 +59,9 @@ struct MeterStripView: View {
             Text(Self.tokens(meter.savedTokens))
                 .font(.system(size: 10, design: .monospaced))
                 .foregroundStyle(.secondary)
+            if !meter.hasLoss {
+                RefreshButtonView(action: onRefresh)
+            }
         }
         .help(savedBreakdown)
     }
