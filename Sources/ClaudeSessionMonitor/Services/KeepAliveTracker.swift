@@ -17,6 +17,12 @@ private struct KeepAliveState {
     /// `ackTimeout` elapses — blocks firing again while one is already in flight.
     var awaitingOwnPingResponse = false
     var pingFiredAt: Date?
+    /// True once the user has explicitly switched this session's keep-alive on or off themselves (row
+    /// menu, detail panel). Once set, `autoEnableIfNeeded` leaves this session alone — otherwise a manual
+    /// "turn off" while `SettingsStore.keepAliveAllActiveSessions` is on got silently forced back on at
+    /// the next rescan, which is exactly the bug reported directly (screenshot showing a session the user
+    /// had just turned off still reading "on" moments later).
+    var setByUser = false
 }
 
 /// Drives the "unattended keep-alive" feature: requested directly for when the user is away (a meeting,
@@ -42,13 +48,23 @@ final class KeepAliveTracker {
 
     private var states: [String: KeepAliveState] = [:]
 
-    func isEnabled(_ sessionID: String) -> Bool {
-        states[sessionID]?.enabled ?? false
+    func setEnabled(_ enabled: Bool, for session: Session) {
+        apply(enabled, for: session, setByUser: true)
     }
 
-    func setEnabled(_ enabled: Bool, for session: Session) {
+    /// Used only by `SessionListViewModel.enableKeepAliveForActiveSessions` (the
+    /// `keepAliveAllActiveSessions` global setting) — switches keep-alive on for a session it's never
+    /// touched before, but leaves alone any session the user has already toggled themselves, on or off,
+    /// so a manual "turn off" sticks instead of being forced back on at the next rescan.
+    func autoEnableIfNeeded(for session: Session) {
+        if let state = states[session.id], state.setByUser || state.enabled { return }
+        apply(true, for: session, setByUser: false)
+    }
+
+    private func apply(_ enabled: Bool, for session: Session, setByUser: Bool) {
         var state = states[session.id] ?? KeepAliveState(lastSeenTurnTime: session.lastTurnTime)
         state.enabled = enabled
+        if setByUser { state.setByUser = true }
         if enabled {
             // Fresh budget every time it's switched on, including re-enabling after it ran out.
             state.pingsUsed = 0

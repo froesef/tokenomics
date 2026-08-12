@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import Foundation
 
 /// Drives the session list: owns the transcript scan, the usage refresh, the per-second UI tick, and
@@ -30,6 +31,7 @@ final class SessionListViewModel: ObservableObject {
     private var hoverTask: Task<Void, Never>?
     private var pointerOverRow = false
     private var pointerOverPanel = false
+    private var cancellables = Set<AnyCancellable>()
 
     /// Held for the app's entire lifetime, never ended: this is an `LSUIElement` accessory app with no
     /// Dock icon or visible window — the exact profile macOS's App Nap targets for background throttling,
@@ -55,6 +57,14 @@ final class SessionListViewModel: ObservableObject {
             Task { await self?.rescan() }
         }
         watcher.startWatching()
+
+        // Applied again on every `rescan()` too (so a session that later becomes active also picks it
+        // up), but also here so switching the setting on takes effect right away rather than waiting for
+        // the next 15s poll.
+        settings.$keepAliveAllActiveSessions
+            .filter { $0 }
+            .sink { [weak self] _ in self?.enableKeepAliveForActiveSessions(now: Date()) }
+            .store(in: &cancellables)
 
         startTicking()
         startPolling()
@@ -158,6 +168,7 @@ final class SessionListViewModel: ObservableObject {
         for session in sessions {
             keepAlive.observeTurn(session: session, now: currentNow)
         }
+        enableKeepAliveForActiveSessions(now: currentNow)
         // Prune against the raw scan, not the process-filtered `sessions` list below: that filter relies
         // on flaky `pgrep`/`lsof` process detection (see the comment above), and a single missed scan
         // would otherwise wipe a session's keep-alive toggle for no reason the user did anything about.
@@ -254,6 +265,22 @@ final class SessionListViewModel: ObservableObject {
 
     func setKeepAlive(_ enabled: Bool, for session: Session) {
         keepAlive.setEnabled(enabled, for: session)
+    }
+
+    /// When `settings.keepAliveAllActiveSessions` is on, switches Auto Keep-Alive on for every session
+    /// that still has time left on its cache and hasn't been touched yet — both right now (see the
+    /// `sink` in `init`) and for any session that becomes active later (called from every `rescan()`).
+    /// `KeepAliveTracker.autoEnableIfNeeded` is the one that actually skips sessions the user has already
+    /// toggled themselves (on or off), so a manual "turn off" sticks rather than being forced back on
+    /// here every 15s.
+    private func enableKeepAliveForActiveSessions(now: Date) {
+        guard settings.keepAliveAllActiveSessions else { return }
+        for session in sessions {
+            let ttl = session.effectiveTTL(fallback: settings.ttl)
+            if session.remaining(now: now, ttl: ttl) > 0 {
+                keepAlive.autoEnableIfNeeded(for: session)
+            }
+        }
     }
 
     /// Per-second check (see `tick`): fires an unattended keep-alive ping for any enabled session that's
