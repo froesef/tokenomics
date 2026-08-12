@@ -22,9 +22,14 @@ struct MenuContentView: View {
                             hasOpenTab: viewModel.settings.ghosttyFocusEnabled
                                 && viewModel.ghostty.isAvailable
                                 && viewModel.ghostty.hasOpenTab(workingDirectory: session.workingDirectory),
+                            keepAliveInfo: viewModel.keepAliveInfo(for: session),
                             onFocus: { Task { await viewModel.focus(session) } },
                             onPasteCommand: { text in Task { await viewModel.pasteCommand(text, into: session) } },
                             onPing: { Task { await viewModel.ping(session) } },
+                            onToggleKeepAlive: {
+                                let current = viewModel.keepAliveInfo(for: session).enabled
+                                viewModel.setKeepAlive(!current, for: session)
+                            },
                             onHoverChanged: { hovering in
                                 viewModel.rowHoverChanged(
                                     session, isHovering: hovering,

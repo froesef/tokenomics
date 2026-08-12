@@ -42,6 +42,20 @@ struct SettingsView: View {
             }
 
             Toggle("Enable Ghostty focus action", isOn: $settings.ghosttyFocusEnabled)
+
+            LabeledContent("Auto Keep-Alive cap (5min TTL)") {
+                Stepper(value: $settings.keepAliveMaxPings5m, in: 1...30, step: 1) {
+                    Text("\(Int(settings.keepAliveMaxPings5m))×")
+                }
+            }
+            .help("Max automatic keep-alive pings before it stops, for sessions on the 5-minute cache TTL")
+
+            LabeledContent("Auto Keep-Alive cap (60min TTL)") {
+                Stepper(value: $settings.keepAliveMaxPings60m, in: 1...30, step: 1) {
+                    Text("\(Int(settings.keepAliveMaxPings60m))×")
+                }
+            }
+            .help("Max automatic keep-alive pings before it stops, for sessions on the 1-hour cache TTL")
         }
         .padding(20)
         .frame(width: contentWidth)

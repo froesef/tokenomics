@@ -11,9 +11,11 @@ struct SessionDetailPanelView: View {
     /// Best-effort seconds since Ghostty's frontmost tab last pointed at this directory — see
     /// GhosttyController.timeSinceLastActive. Nil if never observed.
     let timeSinceLastActive: TimeInterval?
+    let keepAliveInfo: KeepAliveInfo
     let onFocus: () -> Void
     let onPasteCommand: (String) -> Void
     let onPing: () -> Void
+    let onToggleKeepAlive: () -> Void
     /// Reports whether the pointer is over this panel, so SessionListViewModel can keep it open while the
     /// pointer crosses from the row to here — see the doc comment on `rowHoverChanged`.
     let onHoverChanged: (Bool) -> Void
@@ -22,6 +24,7 @@ struct SessionDetailPanelView: View {
     @State private var hoveringHandoff = false
     @State private var hoveringCompact = false
     @State private var hoveringPing = false
+    @State private var hoveringKeepAlive = false
 
     private var ttl: TimeInterval { session.effectiveTTL(fallback: settings.ttl) }
 
@@ -101,6 +104,7 @@ struct SessionDetailPanelView: View {
                 infoRow("Last output", "\(charCount) chars")
             }
             infoRow("Last active", lastActiveText)
+            infoRow("Auto Keep-Alive", keepAliveInfoText)
         }
     }
 
@@ -109,6 +113,10 @@ struct SessionDetailPanelView: View {
             return session.activity.label
         }
         return "compacting (\(Int(Date().timeIntervalSince(started)))s so far)"
+    }
+
+    private var keepAliveInfoText: String {
+        keepAliveInfo.enabled ? "on (\(keepAliveInfo.pingsUsed)/\(keepAliveInfo.maxPings) used)" : "off"
     }
 
     private func rtkSavingsText(_ stats: RTKStats) -> String {
@@ -167,7 +175,14 @@ struct SessionDetailPanelView: View {
             actionRow("Paste /handoff", isHovering: $hoveringHandoff) { onPasteCommand("/handoff") }
             actionRow("Paste /compact", isHovering: $hoveringCompact) { onPasteCommand("/compact") }
             actionRow("Ping (\"still there?\")", isHovering: $hoveringPing, action: onPing)
+            actionRow(keepAliveActionTitle, isHovering: $hoveringKeepAlive, action: onToggleKeepAlive)
         }
+    }
+
+    private var keepAliveActionTitle: String {
+        keepAliveInfo.enabled
+            ? "Turn off Auto Keep-Alive (\(keepAliveInfo.pingsUsed)/\(keepAliveInfo.maxPings) used)"
+            : "Turn on Auto Keep-Alive"
     }
 
     private func actionRow(_ title: String, isHovering: Binding<Bool>, action: @escaping () -> Void) -> some View {

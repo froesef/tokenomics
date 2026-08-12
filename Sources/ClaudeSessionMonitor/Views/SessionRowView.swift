@@ -14,9 +14,11 @@ struct SessionRowView: View {
     let now: Date
     let settings: SettingsStore
     let hasOpenTab: Bool
+    let keepAliveInfo: KeepAliveInfo
     let onFocus: () -> Void
     let onPasteCommand: (String) -> Void
     let onPing: () -> Void
+    let onToggleKeepAlive: () -> Void
     let onHoverChanged: (Bool) -> Void
 
     @State private var isHighlighted = false
@@ -105,6 +107,9 @@ struct SessionRowView: View {
                 .disabled(!hasOpenTab)
             Button("Ping (\"still there?\")", action: onPing)
                 .disabled(!hasOpenTab)
+            Divider()
+            Button(keepAliveMenuTitle, action: onToggleKeepAlive)
+                .disabled(!hasOpenTab)
         }
     }
 
@@ -121,6 +126,14 @@ struct SessionRowView: View {
                 .font(.system(size: 9, weight: .medium))
         }
         .foregroundStyle(isHighlighted ? .white : session.activity.color)
+    }
+
+    /// Automatic keep-alive stays available to switch on even with a full budget used up — the counter
+    /// resets the moment it's (re-)enabled, see `KeepAliveTracker.setEnabled`.
+    private var keepAliveMenuTitle: String {
+        keepAliveInfo.enabled
+            ? "Auto Keep-Alive: On (\(keepAliveInfo.pingsUsed)/\(keepAliveInfo.maxPings) used) — turn off"
+            : "Auto Keep-Alive: Off — turn on"
     }
 
     private var countdownText: String {

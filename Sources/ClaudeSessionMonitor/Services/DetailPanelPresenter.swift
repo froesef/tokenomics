@@ -18,15 +18,18 @@ final class DetailPanelPresenter {
 
     func show(
         session: Session, settings: SettingsStore, hasOpenTab: Bool, timeSinceLastActive: TimeInterval?,
-        anchorWindow: NSWindow?,
+        keepAliveInfo: KeepAliveInfo, anchorWindow: NSWindow?,
         onFocus: @escaping () -> Void, onPasteCommand: @escaping (String) -> Void,
-        onPing: @escaping () -> Void, onHoverChanged: @escaping (Bool) -> Void
+        onPing: @escaping () -> Void, onToggleKeepAlive: @escaping () -> Void,
+        onHoverChanged: @escaping (Bool) -> Void
     ) {
         hide()
 
         let view = SessionDetailPanelView(
             session: session, settings: settings, hasOpenTab: hasOpenTab, timeSinceLastActive: timeSinceLastActive,
-            onFocus: onFocus, onPasteCommand: onPasteCommand, onPing: onPing, onHoverChanged: onHoverChanged
+            keepAliveInfo: keepAliveInfo,
+            onFocus: onFocus, onPasteCommand: onPasteCommand, onPing: onPing, onToggleKeepAlive: onToggleKeepAlive,
+            onHoverChanged: onHoverChanged
         )
         let hostingView = NSHostingView(rootView: view)
         let size = hostingView.fittingSize

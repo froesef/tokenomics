@@ -24,6 +24,13 @@ protocol TerminalController: AnyObject {
     /// Never used for anything that executes on its own — see spec.md §11 ("read-and-focus only") and
     /// the deviation note on `GhosttyController` for why this stays a manual last step.
     func pasteText(_ text: String, workingDirectory: String) async throws
+    /// Pastes text into the matching terminal, then submits it with a Return key event — unlike
+    /// `pasteText`, this one *does* execute whatever was pasted, with no user step in between. This is a
+    /// deliberate, narrow exception to the "read-and-focus only" rule above: used exclusively by the
+    /// automatic keep-alive feature (see `KeepAliveTracker`) for its one fixed, harmless prompt, for when
+    /// the user is genuinely away (a meeting, lunch) and there's no one to press Enter before the cache
+    /// goes cold. No other caller in this app should use this.
+    func pasteTextAndSubmit(_ text: String, workingDirectory: String) async throws
     /// Re-probes availability and re-fetches the set of open working directories. Availability and open
     /// tabs both change while the app runs, so callers should call this periodically (the ViewModel does,
     /// on its regular refresh) rather than caching either forever.
@@ -257,6 +264,22 @@ final class GhosttyController: TerminalController {
         let body = """
         focus targetTerminal
         input text "\(escapedText)" to targetTerminal
+        """
+        if let error = await Self.runMatchAndAct(workingDirectory: workingDirectory, bodyIfFound: body) {
+            throw GhosttyError.scriptFailed(error)
+        }
+    }
+
+    /// `send key "enter"` is Ghostty's own scripting command (from the same .sdef as `input text` /
+    /// `focus`) for a real keyboard event, gated by the same Automation permission — not a System Events
+    /// keystroke-injection workaround, which would need a separate Accessibility grant.
+    func pasteTextAndSubmit(_ text: String, workingDirectory: String) async throws {
+        guard isAvailable else { throw GhosttyError.unavailable }
+        let escapedText = Self.escape(text)
+        let body = """
+        focus targetTerminal
+        input text "\(escapedText)" to targetTerminal
+        send key "enter" to targetTerminal
         """
         if let error = await Self.runMatchAndAct(workingDirectory: workingDirectory, bodyIfFound: body) {
             throw GhosttyError.scriptFailed(error)

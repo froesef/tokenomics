@@ -23,6 +23,16 @@ final class SettingsStore: ObservableObject {
     @Published var ghosttyFocusEnabled: Bool {
         didSet { UserDefaults.standard.set(ghosttyFocusEnabled, forKey: Keys.ghosttyFocusEnabled) }
     }
+    /// Cap on automatic keep-alive pings (see KeepAliveTracker) for a session whose TTL is the 5-minute
+    /// bucket — higher than the 1h bucket's cap because each ping only buys 5 minutes of runway, so
+    /// covering a comparable stretch of "user is away" needs proportionally more of them.
+    @Published var keepAliveMaxPings5m: Double {
+        didSet { UserDefaults.standard.set(keepAliveMaxPings5m, forKey: Keys.keepAliveMaxPings5m) }
+    }
+    /// Same cap, for the 1-hour TTL bucket.
+    @Published var keepAliveMaxPings60m: Double {
+        didSet { UserDefaults.standard.set(keepAliveMaxPings60m, forKey: Keys.keepAliveMaxPings60m) }
+    }
 
     /// Fallback TTL used only when a session has no per-turn `detectedTTL` yet (see
     /// `Session.effectiveTTL`) — e.g. before its first cache-writing turn. Not a user-facing setting: the
@@ -39,6 +49,8 @@ final class SettingsStore: ObservableObject {
         static let notifyBeforeCold = "notifyBeforeCold"
         static let notifyLeadTime = "notifyLeadTimeSeconds"
         static let ghosttyFocusEnabled = "ghosttyFocusEnabled"
+        static let keepAliveMaxPings5m = "keepAliveMaxPings5m"
+        static let keepAliveMaxPings60m = "keepAliveMaxPings60m"
     }
 
     private init() {
@@ -48,5 +60,7 @@ final class SettingsStore: ObservableObject {
         notifyBeforeCold = (d.object(forKey: Keys.notifyBeforeCold) as? Bool) ?? true
         notifyLeadTimeSeconds = (d.object(forKey: Keys.notifyLeadTime) as? Double) ?? 60
         ghosttyFocusEnabled = (d.object(forKey: Keys.ghosttyFocusEnabled) as? Bool) ?? true
+        keepAliveMaxPings5m = (d.object(forKey: Keys.keepAliveMaxPings5m) as? Double) ?? 10
+        keepAliveMaxPings60m = (d.object(forKey: Keys.keepAliveMaxPings60m) as? Double) ?? 3
     }
 }

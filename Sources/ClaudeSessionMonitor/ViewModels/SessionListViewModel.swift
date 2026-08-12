@@ -18,6 +18,7 @@ final class SessionListViewModel: ObservableObject {
     private let notifications = NotificationService()
     private let banners = BannerPresenter()
     private let processMatcher = ProcessMatcher()
+    private let keepAlive = KeepAliveTracker()
     let detailPanel = DetailPanelPresenter()
 
     /// Resolved once via WindowAccessor in MenuContentView — MenuBarExtra's `.window` style otherwise
@@ -29,6 +30,19 @@ final class SessionListViewModel: ObservableObject {
     private var hoverTask: Task<Void, Never>?
     private var pointerOverRow = false
     private var pointerOverPanel = false
+
+    /// Held for the app's entire lifetime, never ended: this is an `LSUIElement` accessory app with no
+    /// Dock icon or visible window — the exact profile macOS's App Nap targets for background throttling,
+    /// which coalesces/delays timers the longer the app sits unattended in the background. That's
+    /// precisely when the automatic keep-alive (see KeepAliveTracker) most needs to fire — a session going
+    /// cold while the user's away in a meeting is the whole point of the feature — so App Nap must stay
+    /// disabled for this process the whole time it runs, not just while a window happens to be open.
+    /// `.userInitiatedAllowingIdleSystemSleep` disables App Nap without also blocking the Mac's own idle
+    /// system sleep, so this doesn't fight the user's own power/sleep settings.
+    private let backgroundActivityToken = ProcessInfo.processInfo.beginActivity(
+        options: .userInitiatedAllowingIdleSystemSleep,
+        reason: "Keep per-second cache countdowns and automatic keep-alive pings on schedule while backgrounded"
+    )
 
     init(settings: SettingsStore = .shared, ghostty: TerminalController = GhosttyController()) {
         self.settings = settings
@@ -77,6 +91,7 @@ final class SessionListViewModel: ObservableObject {
     private func tick() {
         now = Date()
         checkNotifications()
+        checkKeepAlive()
     }
 
     // MARK: - Rescan (file watch / 15s timer)
@@ -106,6 +121,23 @@ final class SessionListViewModel: ObservableObject {
         let anyProcessDetected = withCost.contains { $0.isProcessRunning }
         if anyProcessDetected {
             withCost = withCost.filter { $0.isProcessRunning }
+
+            // A live PID can't be attributed to a specific transcript (ProcessMatcher matches by working
+            // directory only — see Session.livePIDs), so every session sharing a directory with a live
+            // process passes the filter above, even a finished one from earlier today. Cap survivors per
+            // directory to the number of live PIDs actually found there, keeping the most-recently-active
+            // transcripts — the honest proxy for "which of these is the still-open tab" — so a stale
+            // leftover doesn't show up as a second session (and, via GhosttyController's directory-only
+            // matching, a second row that focuses the one real tab).
+            var byDirectory: [String: [Session]] = [:]
+            for session in withCost {
+                byDirectory[session.workingDirectory, default: []].append(session)
+            }
+            withCost = byDirectory.values.flatMap { group -> [Session] in
+                let liveCount = group[0].livePIDs.count
+                guard group.count > liveCount else { return group }
+                return Array(group.sorted { $0.lastTurnTime > $1.lastTurnTime }.prefix(liveCount))
+            }
         }
 
         let ttlFallback = settings.ttl
@@ -122,6 +154,14 @@ final class SessionListViewModel: ObservableObject {
             if aCold != bCold { return !aCold }
             return aCold ? a.lastTurnTime > b.lastTurnTime : aRemaining < bRemaining
         }
+
+        for session in sessions {
+            keepAlive.observeTurn(session: session, now: currentNow)
+        }
+        // Prune against the raw scan, not the process-filtered `sessions` list below: that filter relies
+        // on flaky `pgrep`/`lsof` process detection (see the comment above), and a single missed scan
+        // would otherwise wipe a session's keep-alive toggle for no reason the user did anything about.
+        keepAlive.pruneStates(keeping: Set(scanned.map(\.id)))
 
         var warnings: [String] = []
         if await usage.isAvailable == false {
@@ -201,6 +241,56 @@ final class SessionListViewModel: ObservableObject {
         await pasteCommand(Self.pingPrompt, into: session)
     }
 
+    // MARK: - Automatic keep-alive
+
+    /// The unattended keep-alive's own prompt — distinct from `pingPrompt` above since this one is
+    /// submitted automatically (see `KeepAliveTracker`), so it's worded to make the model's answer as
+    /// cheap and unambiguous as possible: one fixed word, nothing that could be read as a real request.
+    static let autoKeepAlivePrompt = "If you are still there, ONLY answer: pong"
+
+    func keepAliveInfo(for session: Session) -> KeepAliveInfo {
+        keepAlive.info(for: session, settings: settings)
+    }
+
+    func setKeepAlive(_ enabled: Bool, for session: Session) {
+        keepAlive.setEnabled(enabled, for: session)
+    }
+
+    /// Per-second check (see `tick`): fires an unattended keep-alive ping for any enabled session that's
+    /// about to go cold, still has budget, and has an open tab to paste into. Gated on the same
+    /// automation toggle/availability as every other Ghostty action — if the user turned that off, no
+    /// automatic keystrokes should reach their terminal either.
+    private func checkKeepAlive() {
+        guard settings.ghosttyFocusEnabled, ghostty.isAvailable else { return }
+        for session in sessions {
+            guard ghostty.hasOpenTab(workingDirectory: session.workingDirectory) else { continue }
+            guard keepAlive.shouldFire(session: session, now: now, settings: settings) else { continue }
+            fireKeepAlivePing(for: session)
+        }
+    }
+
+    private func fireKeepAlivePing(for session: Session) {
+        keepAlive.recordFireAttempted(for: session.id, now: now)
+        FileHandle.standardError.write(
+            "[ClaudeSessionMonitor] keep-alive: firing for \(session.projectName)\n".data(using: .utf8)!
+        )
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await self.ghostty.pasteTextAndSubmit(Self.autoKeepAlivePrompt, workingDirectory: session.workingDirectory)
+                self.keepAlive.recordFireSucceeded(for: session.id)
+                FileHandle.standardError.write(
+                    "[ClaudeSessionMonitor] keep-alive: succeeded for \(session.projectName)\n".data(using: .utf8)!
+                )
+            } catch {
+                self.keepAlive.recordFireFailed(for: session.id)
+                FileHandle.standardError.write(
+                    "[ClaudeSessionMonitor] keep-alive: failed for \(session.projectName): \(error)\n".data(using: .utf8)!
+                )
+            }
+        }
+    }
+
     // MARK: - Hover detail panel
 
     /// Debounced like a native submenu: a brief hover-intent delay before showing (so passing the mouse
@@ -222,10 +312,15 @@ final class SessionListViewModel: ObservableObject {
                 self.detailPanel.show(
                     session: session, settings: self.settings, hasOpenTab: hasOpenTab,
                     timeSinceLastActive: self.ghostty.timeSinceLastActive(workingDirectory: session.workingDirectory),
+                    keepAliveInfo: self.keepAliveInfo(for: session),
                     anchorWindow: self.hostWindow,
                     onFocus: { Task { await self.focus(session) } },
                     onPasteCommand: { text in Task { await self.pasteCommand(text, into: session) } },
                     onPing: { Task { await self.ping(session) } },
+                    onToggleKeepAlive: { [weak self] in
+                        guard let self else { return }
+                        self.setKeepAlive(!self.keepAliveInfo(for: session).enabled, for: session)
+                    },
                     onHoverChanged: { [weak self] hovering in self?.panelHoverChanged(hovering) }
                 )
             }

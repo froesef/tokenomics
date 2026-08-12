@@ -12,7 +12,8 @@ before that happens.
 
 - **Live countdown per session** — the menu bar shows the soonest-to-expire session; the dropdown lists
   every session from the last 24h, sorted with warm/expiring sessions always above cold ones.
-- **Cost and cache-hit ratio per session**, via [`ccusage`](https://github.com/ryoppippi/ccusage).
+- **Cost per session**, via [`ccusage`](https://github.com/ryoppippi/ccusage). **Cache-hit ratio per
+  session**, computed directly from the transcript's own token counts — no `ccusage` involved.
 - **Hover for full detail**: working directory, TTL source, last-turn time, raw token counts, model and
   reasoning effort, CLI version, whether a live `claude` process was actually found, and which tools /
   MCP plugins / Skills / hooks that session used.
