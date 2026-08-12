@@ -53,6 +53,7 @@ struct SessionRowView: View {
                             .lineLimit(1)
                             .truncationMode(.tail)
                     }
+                    activityBadge
                 }
 
                 HStack(spacing: 6) {
@@ -105,6 +106,21 @@ struct SessionRowView: View {
             Button("Ping (\"still there?\")", action: onPing)
                 .disabled(!hasOpenTab)
         }
+    }
+
+    /// Shown for every row, including idle — requested directly, so all three states read at a glance
+    /// without needing to hover for the detail panel. Idle has no icon (nothing is happening), just the
+    /// muted label, so it doesn't visually compete with the running/compacting badges.
+    private var activityBadge: some View {
+        HStack(spacing: 2) {
+            if !session.activity.symbolName.isEmpty {
+                Image(systemName: session.activity.symbolName)
+                    .font(.system(size: 8))
+            }
+            Text(session.activity.label)
+                .font(.system(size: 9, weight: .medium))
+        }
+        .foregroundStyle(isHighlighted ? .white : session.activity.color)
     }
 
     private var countdownText: String {
