@@ -1,9 +1,12 @@
 import SwiftUI
 
-/// One row in the dropdown (spec.md §3). Tapping a row focuses the matching Ghostty tab when available —
-/// this is also how the "switch windows/tabs to that session" behavior is exposed from the dropdown, not
-/// just from the expiry banner. Hovering shows a flyout detail panel beside the dropdown (see
-/// DetailPanelPresenter) with categorized tool/plugin usage, session facts, and the same paste/focus
+/// One row in the dropdown (spec.md §3). Double-clicking a row focuses the matching Ghostty tab when
+/// available and closes the dropdown (see `SessionListViewModel.focus`) — this is also how the "switch
+/// windows/tabs to that session" behavior is exposed from the dropdown, not just from the expiry banner.
+/// Single click is deliberately a no-op here: it's the same click a user makes just skimming down the
+/// list to read rows, and firing Ghostty's AppleScript `activate` on every one of those would yank focus
+/// away from whatever the user's looking at. Hovering shows a flyout detail panel beside the dropdown
+/// (see DetailPanelPresenter) with categorized tool/plugin usage, session facts, and the same paste/focus
 /// actions; right-click keeps a plain context menu as a redundant fast path for the same actions.
 ///
 /// `hasOpenTab` is a real per-session cross-reference against Ghostty's currently open terminals (see
@@ -96,7 +99,7 @@ struct SessionRowView: View {
             isHighlighted = hovering
             onHoverChanged(hovering)
         }
-        .onTapGesture {
+        .onTapGesture(count: 2) {
             guard hasOpenTab else { return }
             onFocus()
         }

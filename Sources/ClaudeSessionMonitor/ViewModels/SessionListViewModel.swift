@@ -233,14 +233,20 @@ final class SessionListViewModel: ObservableObject {
 
     func focus(_ session: Session) async {
         guard settings.ghosttyFocusEnabled, ghostty.isAvailable else { return }
-        try? await ghostty.focusTab(workingDirectory: session.workingDirectory)
+        // Close the dropdown right away rather than waiting on the AppleScript round-trip below: the
+        // point is to jump straight into the terminal, so the menu shouldn't still be sitting on screen
+        // once Ghostty comes forward. `orderOut` (not `close()`) since this is the same NSWindow instance
+        // MenuBarExtra's `.window` style reuses every time the dropdown reopens — closing it outright risks
+        // it being released.
+        hostWindow?.orderOut(nil)
+        try? await ghostty.focusTab(workingDirectory: session.workingDirectory, aiTitle: session.aiTitle)
     }
 
     /// Pastes (never executes — see GhosttyController) a command like `/handoff` or `/compact` into the
     /// session's terminal and focuses it, so the user reviews and runs it themselves.
     func pasteCommand(_ text: String, into session: Session) async {
         guard settings.ghosttyFocusEnabled, ghostty.isAvailable else { return }
-        try? await ghostty.pasteText(text, workingDirectory: session.workingDirectory)
+        try? await ghostty.pasteText(text, workingDirectory: session.workingDirectory, aiTitle: session.aiTitle)
     }
 
     /// "Ping" is a nop keep-alive: unlike /handoff (asks for a real summary) or /compact (does real work),
@@ -304,7 +310,7 @@ final class SessionListViewModel: ObservableObject {
         Task { [weak self] in
             guard let self else { return }
             do {
-                try await self.ghostty.pasteTextAndSubmit(Self.autoKeepAlivePrompt, workingDirectory: session.workingDirectory)
+                try await self.ghostty.pasteTextAndSubmit(Self.autoKeepAlivePrompt, workingDirectory: session.workingDirectory, aiTitle: session.aiTitle)
                 self.keepAlive.recordFireSucceeded(for: session.id)
                 FileHandle.standardError.write(
                     "[ClaudeSessionMonitor] keep-alive: succeeded for \(session.projectName)\n".data(using: .utf8)!

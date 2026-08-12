@@ -17,20 +17,24 @@ protocol TerminalController: AnyObject {
     /// exact. Nil if never observed (e.g. just launched, or this directory's tab has never been frontmost
     /// while this app was running).
     func timeSinceLastActive(workingDirectory: String) -> TimeInterval?
-    func focusTab(workingDirectory: String) async throws
+    /// `aiTitle`, when non-nil, disambiguates between several terminals that all report the same working
+    /// directory (e.g. one pane running the Claude Code session, a plain idle shell twin sitting at the
+    /// same path in another split) — see the deviation note on `findTerminalScript`. Pass
+    /// `Session.aiTitle` here whenever it's available; a caller with no session context can omit it.
+    func focusTab(workingDirectory: String, aiTitle: String?) async throws
     /// Pastes text into the matching terminal — via Ghostty's native `input text ... to terminal`
     /// command, which its own dictionary describes as "as if it was pasted": it does **not** press
     /// Return. The text lands in the terminal's input line for the user to review and run themselves.
     /// Never used for anything that executes on its own — see spec.md §11 ("read-and-focus only") and
     /// the deviation note on `GhosttyController` for why this stays a manual last step.
-    func pasteText(_ text: String, workingDirectory: String) async throws
+    func pasteText(_ text: String, workingDirectory: String, aiTitle: String?) async throws
     /// Pastes text into the matching terminal, then submits it with a Return key event — unlike
     /// `pasteText`, this one *does* execute whatever was pasted, with no user step in between. This is a
     /// deliberate, narrow exception to the "read-and-focus only" rule above: used exclusively by the
     /// automatic keep-alive feature (see `KeepAliveTracker`) for its one fixed, harmless prompt, for when
     /// the user is genuinely away (a meeting, lunch) and there's no one to press Enter before the cache
     /// goes cold. No other caller in this app should use this.
-    func pasteTextAndSubmit(_ text: String, workingDirectory: String) async throws
+    func pasteTextAndSubmit(_ text: String, workingDirectory: String, aiTitle: String?) async throws
     /// Re-probes availability and re-fetches the set of open working directories. Availability and open
     /// tabs both change while the app runs, so callers should call this periodically (the ViewModel does,
     /// on its regular refresh) rather than caching either forever.
@@ -189,32 +193,67 @@ final class GhosttyController: TerminalController {
         text.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
     }
 
-    /// The shared "find the matching terminal" fragment: match exact working directory first, then
-    /// contains as a fallback, leaving the result in `targetTerminal` (missing value if none found).
-    /// Assumes it's inlined inside a `tell application "Ghostty" ... end tell` block.
-    private nonisolated static func findTerminalScript(escapedWorkingDirectory dir: String) -> String {
+    /// The shared "find the matching terminal" fragment: match exact working directory first (after
+    /// trimming a trailing slash from both sides, since Claude Code's recorded `cwd` and Ghostty's live
+    /// `working directory` don't always agree on one), then fall back to the same bidirectional,
+    /// path-boundary-aware prefix check `hasOpenTab` uses in Swift — never a raw substring `contains`.
+    ///
+    /// A raw `contains` was the original bug (see git history): with two splits in one tab, one at a repo
+    /// root and one `cd`'d into a subdirectory (or worktree) of it — this project's own layout — `contains`
+    /// only ever tested "terminal dir contains target dir", so any exact-match miss (e.g. a trailing-slash
+    /// mismatch) fell through to matching whichever split's directory happened to *start with* the target
+    /// path, even when that was the wrong split.
+    ///
+    /// A second, distinct ambiguity survives even with an exact directory match: two splits can share the
+    /// literal same working directory — one running the Claude Code session, the other a plain idle shell
+    /// sitting at the same path (confirmed live: a real tab here had two terminals both reporting the same
+    /// `cwd`, one whose Ghostty-visible title was still the ai-generated session title from `ai-title`
+    /// events, `name of term`, and the other showing the default abbreviated-path title Ghostty falls back
+    /// to at an idle shell prompt). Directory alone can't tell those apart. When `titleHint` (the session's
+    /// `aiTitle`) is non-empty, prefer whichever exact-directory match's title contains it; only fall back
+    /// to "first exact match found" when no terminal's title matches (e.g. `aiTitle` not generated yet).
+    /// Leaves the result in `targetTerminal` (missing value if none found). Assumes it's inlined inside a
+    /// `tell application "Ghostty" ... end tell` block.
+    private nonisolated static func findTerminalScript(escapedWorkingDirectory dir: String, escapedTitleHint hint: String) -> String {
         """
+        set targetDir to "\(dir)"
+        if targetDir ends with "/" and (length of targetDir) > 1 then
+            set targetDir to text 1 thru -2 of targetDir
+        end if
+        set titleHint to "\(hint)"
         set targetTerminal to missing value
+        set fallbackTerminal to missing value
         repeat with w in windows
             repeat with t in tabs of w
                 repeat with term in terminals of t
                     try
-                        if (working directory of term as text) is "\(dir)" then
-                            set targetTerminal to term
-                            exit repeat
+                        set termDir to (working directory of term as text)
+                        if termDir ends with "/" and (length of termDir) > 1 then
+                            set termDir to text 1 thru -2 of termDir
+                        end if
+                        if termDir is targetDir then
+                            if fallbackTerminal is missing value then set fallbackTerminal to term
+                            if titleHint is not "" and targetTerminal is missing value then
+                                try
+                                    if (name of term as text) contains titleHint then set targetTerminal to term
+                                end try
+                            end if
                         end if
                     end try
                 end repeat
-                if targetTerminal is not missing value then exit repeat
             end repeat
-            if targetTerminal is not missing value then exit repeat
         end repeat
+        if targetTerminal is missing value then set targetTerminal to fallbackTerminal
         if targetTerminal is missing value then
             repeat with w in windows
                 repeat with t in tabs of w
                     repeat with term in terminals of t
                         try
-                            if (working directory of term as text) contains "\(dir)" then
+                            set termDir to (working directory of term as text)
+                            if termDir ends with "/" and (length of termDir) > 1 then
+                                set termDir to text 1 thru -2 of termDir
+                            end if
+                            if termDir starts with (targetDir & "/") or targetDir starts with (termDir & "/") then
                                 set targetTerminal to term
                                 exit repeat
                             end if
@@ -232,11 +271,12 @@ final class GhosttyController: TerminalController {
     /// any). `bodyIfFound` is the AppleScript run when a match exists (e.g. `focus targetTerminal`),
     /// inserted inside the `tell` block; `activate application "Ghostty"` always runs afterward so the
     /// window is actually visible once found (spec.md §8).
-    private static func runMatchAndAct(workingDirectory: String, bodyIfFound: String) async -> String? {
+    private static func runMatchAndAct(workingDirectory: String, aiTitle: String?, bodyIfFound: String) async -> String? {
         let dir = Self.escape(workingDirectory)
+        let hint = Self.escape(aiTitle ?? "")
         let script = """
         tell application "Ghostty"
-            \(Self.findTerminalScript(escapedWorkingDirectory: dir))
+            \(Self.findTerminalScript(escapedWorkingDirectory: dir, escapedTitleHint: hint))
             if targetTerminal is not missing value then
                 \(bodyIfFound)
             end if
@@ -250,22 +290,22 @@ final class GhosttyController: TerminalController {
         }.value
     }
 
-    func focusTab(workingDirectory: String) async throws {
+    func focusTab(workingDirectory: String, aiTitle: String?) async throws {
         guard isAvailable else { throw GhosttyError.unavailable }
         // Match the first terminal and don't error if several share a working directory (spec.md §8).
-        if let error = await Self.runMatchAndAct(workingDirectory: workingDirectory, bodyIfFound: "focus targetTerminal") {
+        if let error = await Self.runMatchAndAct(workingDirectory: workingDirectory, aiTitle: aiTitle, bodyIfFound: "focus targetTerminal") {
             throw GhosttyError.scriptFailed(error)
         }
     }
 
-    func pasteText(_ text: String, workingDirectory: String) async throws {
+    func pasteText(_ text: String, workingDirectory: String, aiTitle: String?) async throws {
         guard isAvailable else { throw GhosttyError.unavailable }
         let escapedText = Self.escape(text)
         let body = """
         focus targetTerminal
         input text "\(escapedText)" to targetTerminal
         """
-        if let error = await Self.runMatchAndAct(workingDirectory: workingDirectory, bodyIfFound: body) {
+        if let error = await Self.runMatchAndAct(workingDirectory: workingDirectory, aiTitle: aiTitle, bodyIfFound: body) {
             throw GhosttyError.scriptFailed(error)
         }
     }
@@ -273,7 +313,7 @@ final class GhosttyController: TerminalController {
     /// `send key "enter"` is Ghostty's own scripting command (from the same .sdef as `input text` /
     /// `focus`) for a real keyboard event, gated by the same Automation permission — not a System Events
     /// keystroke-injection workaround, which would need a separate Accessibility grant.
-    func pasteTextAndSubmit(_ text: String, workingDirectory: String) async throws {
+    func pasteTextAndSubmit(_ text: String, workingDirectory: String, aiTitle: String?) async throws {
         guard isAvailable else { throw GhosttyError.unavailable }
         let escapedText = Self.escape(text)
         let body = """
@@ -281,7 +321,7 @@ final class GhosttyController: TerminalController {
         input text "\(escapedText)" to targetTerminal
         send key "enter" to targetTerminal
         """
-        if let error = await Self.runMatchAndAct(workingDirectory: workingDirectory, bodyIfFound: body) {
+        if let error = await Self.runMatchAndAct(workingDirectory: workingDirectory, aiTitle: aiTitle, bodyIfFound: body) {
             throw GhosttyError.scriptFailed(error)
         }
     }
