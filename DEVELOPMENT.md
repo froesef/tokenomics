@@ -291,6 +291,35 @@ root-owned cache files — a pre-existing local `npm` issue, not something this 
     Command Line Tools). `swift build -c release` was run successfully and is the verified build path;
     the `xcodebuild` command in the README is the documented equivalent per Apple's SPM-as-Xcode-project
     support but wasn't run there.
+27. **Menu bar falls back to activity when there's no cache countdown left to show; a `.waitingForInput`
+    activity state was added.** Reported directly: "tasks that run longer than 5 min show that there is
+    nothing running any more," plus a request to detect and show a "user input needed" status. Investigated
+    against this machine's own real `~/.claude` transcripts (not assumed) before changing anything:
+    - The per-row idle/running/compacting state machine itself (`TranscriptWatcher.updateActivity`) turned
+      out to already be correct for long tool calls — replayed it against real transcripts with 15+ minute
+      gaps inside an open turn (a slow `Bash` call, an extended `thinking` block) and it stayed `.running`
+      throughout every one, closing to `.idle` only once the matching `system/turn_duration` line actually
+      arrived. So a long-running task reading as "running" the whole time was never in question.
+    - What actually goes blank after ~5 minutes is the **menu bar's own countdown text**: `barTitle` shows
+      the soonest cache-expiry countdown and returns `nil` once every session is cold, and 300s (5 min) is
+      `SettingsStore.ttl`'s fallback — also confirmed to be the *real, detected* TTL for the majority of
+      sessions on this machine (`Session.detectedTTL`, read from `usage.cache_creation` — not a guess).
+      So a `Bash`/test/build call that runs past that TTL, which is common, leaves the menu bar showing a
+      bare `timer` icon with no text — cache health and "is anything happening" are deliberately separate
+      concepts (see `SessionActivity`'s own doc comment), but the bar's only fallback for "no countdown"
+      was silence, which reads as "nothing running" even though a session is actively working.
+      `SessionListViewModel.busiestActivity` now picks the most urgent non-idle activity across current
+      sessions (waiting-for-input, then compacting, then running) and `MenuBarLabel` (`App.swift`) shows
+      that instead of going blank whenever `barTitle` is `nil`.
+    - For "user input needed": grepped this machine's real transcripts for `tool_use` block names and
+      confirmed `AskUserQuestion` (a clarifying question) and `ExitPlanMode` (a plan awaiting approval) are
+      the two tool calls that block on a human decision rather than doing work. Added
+      `SessionActivity.waitingForInput`, set when the open turn's latest assistant `tool_use` is one of
+      those two, and cleared back to `.running` the moment the matching `tool_result` (the user's answer)
+      arrives — reuses the row badge, hover panel, and now the menu bar fallback above with no separate UI
+      needed. Verified end to end by compiling `TranscriptWatcher` against synthetic transcripts covering
+      both tool names, the answered-question resume case, and the pre-existing long-tool-call/turn_duration
+      cases, all passing.
 
 ## Source layout
 

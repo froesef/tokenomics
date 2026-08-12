@@ -25,10 +25,16 @@ timestamp.
 - **Hover for full detail**: working directory, TTL source, last-turn time, raw token counts, model and
   reasoning effort, CLI version, whether a live `claude` process was actually found, and which tools /
   MCP plugins / Skills / hooks that session used.
-- **Idle / running / compacting badge per row** — inferred from transcript structure (no explicit "in
-  progress" flag exists), so a session mid-turn or mid-`/compact` is visibly distinct from one that's just
-  sitting idle. A `/clear` (or `/compact`) resets that row's cache and tool-usage stats in place, since the
-  old numbers no longer reflect what's actually loaded.
+- **Idle / running / compacting / needs-input badge per row** — inferred from transcript structure (no
+  explicit "in progress" flag exists), so a session mid-turn or mid-`/compact` is visibly distinct from one
+  that's just sitting idle. A session whose latest tool call is an `AskUserQuestion` or an `ExitPlanMode`
+  approval reads as "needs input" instead of "running" — it's blocked on you, not doing any work. A
+  `/clear` (or `/compact`) resets that row's cache and tool-usage stats in place, since the old numbers no
+  longer reflect what's actually loaded.
+- **Menu bar never goes blank while something's happening** — the bar normally shows the soonest cache
+  countdown, but a tool call regularly outlasts a session's TTL (5 minutes by default); once every session
+  is cold there's no countdown left to show, so the bar falls back to whichever session is running,
+  compacting, or waiting on you, rather than showing a bare, easy-to-miss timer icon.
 - **Click a row to focus the matching Ghostty tab** — only offered when a real matching tab exists.
 - **Right-click (or the hover panel) for `/handoff`, `/compact`, and a no-op "Ping"** — these paste into
   Claude Code's terminal as if typed, never run automatically.

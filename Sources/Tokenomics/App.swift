@@ -42,16 +42,33 @@ private struct MenuBarLabel: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            Image(systemName: "timer")
+            Image(systemName: symbolName)
                 .foregroundStyle(tintColor)
-            if let title = viewModel.barTitle {
-                Text(title)
+            if let text {
+                Text(text)
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
             }
         }
     }
 
+    /// The cache countdown wins when there is one. Otherwise, rather than going blank the moment every
+    /// session's cache has expired, fall back to whatever activity is happening — see
+    /// `SessionListViewModel.busiestActivity` for why a bare timer icon at that point is misleading.
+    private var text: String? {
+        viewModel.barTitle ?? viewModel.busiestActivity?.label
+    }
+
+    private var symbolName: String {
+        guard viewModel.barTitle == nil, let activity = viewModel.busiestActivity, !activity.symbolName.isEmpty else {
+            return "timer"
+        }
+        return activity.symbolName
+    }
+
     private var tintColor: Color {
-        viewModel.overallStatus?.color ?? .secondary
+        guard viewModel.barTitle == nil, let activity = viewModel.busiestActivity else {
+            return viewModel.overallStatus?.color ?? .secondary
+        }
+        return activity.color
     }
 }

@@ -427,6 +427,18 @@ final class SessionListViewModel: ObservableObject {
         return "⏱ " + Self.format(remaining)
     }
 
+    /// The most attention-worthy activity across current sessions — the menu bar's fallback (see
+    /// MenuBarLabel) for when `barTitle` is nil. Reported directly: a tool call regularly runs longer
+    /// than a session's cache TTL (5 min is the common default), and once every session is cold,
+    /// `barTitle` goes blank — a bare, textless timer icon at that point reads as "nothing is running"
+    /// even though a session is still actively working or blocked on a question. `.waitingForInput` beats
+    /// `.compacting` beats `.running` since it's the one state that needs the user to actually do
+    /// something, not just wait.
+    var busiestActivity: SessionActivity? {
+        let byUrgency: [SessionActivity] = [.waitingForInput, .compacting, .running]
+        return byUrgency.first { activity in sessions.contains { $0.activity == activity } }
+    }
+
     /// How far back a session's last turn can be and still count toward the menu bar icon's tint. Needed
     /// because the session list spans up to 24h (see TranscriptWatcher.recencyWindow): without this, a
     /// project untouched for hours would keep painting the icon red, which isn't useful "worst current
