@@ -4,6 +4,14 @@ import Combine
 /// Minimal settings, persisted via UserDefaults (spec.md §6). Not in spec.md's suggested file layout
 /// (§7) — added because @AppStorage doesn't propagate change notifications out of an ObservableObject,
 /// so the ViewModel needs a small published store instead.
+/// What the menu-bar title shows when at least one session is being tracked.
+enum MenuBarMode: String, CaseIterable {
+    /// The soonest-to-expire session's live countdown (the app's original behavior).
+    case nextExpiry
+    /// Today's cold-cache waste ("🔻 128k lost") — the quantified cost of letting caches go cold.
+    case lostToday
+}
+
 @MainActor
 final class SettingsStore: ObservableObject {
     static let shared = SettingsStore()
@@ -43,6 +51,12 @@ final class SettingsStore: ObservableObject {
         didSet { UserDefaults.standard.set(keepAliveAllActiveSessions, forKey: Keys.keepAliveAllActiveSessions) }
     }
 
+    /// Whether the menu-bar title shows the next-expiry countdown or today's cold-cache waste — the
+    /// "menu-bar savings mode" toggle. Stored as the enum's raw value.
+    @Published var menuBarMode: MenuBarMode {
+        didSet { UserDefaults.standard.set(menuBarMode.rawValue, forKey: Keys.menuBarMode) }
+    }
+
     /// Fallback TTL used only when a session has no per-turn `detectedTTL` yet (see
     /// `Session.effectiveTTL`) — e.g. before its first cache-writing turn. Not a user-facing setting: the
     /// real TTL is a property of how Claude Code was launched (`ENABLE_PROMPT_CACHING_1H`), not something
@@ -61,6 +75,7 @@ final class SettingsStore: ObservableObject {
         static let keepAliveMaxPings5m = "keepAliveMaxPings5m"
         static let keepAliveMaxPings60m = "keepAliveMaxPings60m"
         static let keepAliveAllActiveSessions = "keepAliveAllActiveSessions"
+        static let menuBarMode = "menuBarMode"
     }
 
     private init() {
@@ -73,5 +88,6 @@ final class SettingsStore: ObservableObject {
         keepAliveMaxPings5m = (d.object(forKey: Keys.keepAliveMaxPings5m) as? Double) ?? 10
         keepAliveMaxPings60m = (d.object(forKey: Keys.keepAliveMaxPings60m) as? Double) ?? 3
         keepAliveAllActiveSessions = (d.object(forKey: Keys.keepAliveAllActiveSessions) as? Bool) ?? false
+        menuBarMode = (d.string(forKey: Keys.menuBarMode)).flatMap(MenuBarMode.init(rawValue:)) ?? .nextExpiry
     }
 }

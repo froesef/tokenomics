@@ -34,6 +34,19 @@ struct SettingsView: View {
                 }
             }
 
+            Section("Menu Bar") {
+                Picker(selection: $settings.menuBarMode) {
+                    Text("Next expiry countdown").tag(MenuBarMode.nextExpiry)
+                    Text("Tokens lost today").tag(MenuBarMode.lostToday)
+                } label: {
+                    SettingLabel(
+                        title: "Menu bar shows",
+                        description: "Show the soonest cache countdown, or today's tokens lost to cold caches (\"🔻 128k lost\"). Falls back to the countdown when nothing's been lost yet."
+                    )
+                }
+                .pickerStyle(.menu)
+            }
+
             Section("Notifications") {
                 Toggle(isOn: $settings.notifyBeforeCold) {
                     SettingLabel(

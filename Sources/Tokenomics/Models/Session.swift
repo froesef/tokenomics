@@ -33,6 +33,26 @@ struct ToolUsage: Equatable, Sendable {
     var isEmpty: Bool { builtInTools.isEmpty && mcpServers.isEmpty && skills.isEmpty && hooks.isEmpty }
 }
 
+/// One cold-cache rewrite observed in a transcript: a turn whose prompt cache had gone cold (the session
+/// sat idle longer than its TTL), so the entire cached prefix had to be re-written at cache-write price
+/// instead of served as a cheap cache read. This is the quantified form of the app's core thesis — an
+/// idle gap that let the cache expire cost real money on the next turn.
+///
+/// Detected in `TranscriptWatcher.loadSession`; see there for the exact signal (a per-turn gap longer than
+/// the detected TTL, combined with `cache_read_input_tokens == 0` and a substantial
+/// `cache_creation_input_tokens` on the turn after the gap — and never the unavoidable first write of a
+/// session). Priced via `Pricing.coldRewriteCostUSD`.
+struct CacheExpiryEvent: Equatable, Sendable {
+    /// Timestamp of the cold turn (the one that paid the rewrite), used to scope the meter to "today".
+    let time: Date
+    /// `cache_creation_input_tokens` on that turn — the whole prefix that had to be rewritten. Exact.
+    let wastedTokens: Int
+    /// Model that answered the cold turn, for per-model pricing. Nil if the transcript didn't record one.
+    let model: String?
+    /// TTL in effect on the cold turn, which sets the cache-write multiplier used to price the waste.
+    let ttl: TimeInterval
+}
+
 /// One coding-agent session: one transcript file or rollout, one working directory, and any cache usage
 /// metadata the source format exposes.
 struct Session: Identifiable, Equatable, Sendable {
@@ -84,6 +104,24 @@ struct Session: Identifiable, Equatable, Sendable {
     /// transcript's `usage.cache_creation.ephemeral_{1h,5m}_input_tokens` fields. When present this is
     /// ground truth for that turn, not a heuristic guess — see README "Deviations from spec.md".
     let detectedTTL: TimeInterval?
+
+    /// Cold-cache rewrite events found in this transcript (see CacheExpiryEvent) — the input to the
+    /// "lost to cache expirations today" meter. One entry per idle gap that let the cache go cold.
+    var expiryEvents: [CacheExpiryEvent] = []
+
+    /// Size, in characters, of the largest single `tool_result` still loaded in context (nothing has
+    /// `/compact`ed or `/clear`ed it away since it landed) — the "big tool dump" signal. A huge inline
+    /// tool result (a full file read, a big Bash dump) inflates every subsequent turn until it's compacted
+    /// away. Nil when the transcript exposed no tool results. See TranscriptWatcher for how it's tracked and
+    /// `Session.bigToolResultCharThreshold` for what counts as "big".
+    var loadedToolResultChars: Int? = nil
+
+    /// A tool result at or above this many characters (~10k tokens at ~4 chars/token) is treated as a
+    /// "big dump" worth nudging the user to `/compact`. A named constant so it's easy to tune.
+    static let bigToolResultCharThreshold = 40_000
+
+    /// Whether a big, un-compacted tool result is currently sitting in this session's context.
+    var hasBigToolDumpLoaded: Bool { (loadedToolResultChars ?? 0) >= Session.bigToolResultCharThreshold }
 
     var cost: Double?
 

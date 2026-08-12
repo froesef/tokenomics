@@ -18,6 +18,16 @@ timestamp.
 
 - **Live countdown per session** — the menu bar shows the soonest-to-expire session; the dropdown lists
   every session from the last 24h, sorted with warm/expiring sessions always above cold ones.
+- **Savings / waste meter** — a strip at the top of the dropdown quantifies today: **tokens lost to
+  cold-cache expirations** (when a session sat idle past its TTL and the next turn had to re-write the
+  whole prompt prefix at cache-write price instead of a cheap cache read) and **tokens saved** (warm-cache
+  reads billed at ~0.1× vs. full input price, plus `rtk` output-filtering). Token counts are exact from the
+  transcript; dollar figures are a labeled estimate (`~$X est.`, from a small per-model rate table — the
+  per-session cost column still delegates to `ccusage`, which exposes no per-token rates). The menu bar can
+  be switched (Settings → Menu Bar) to show `🔻 128k lost` instead of the countdown.
+- **Big-context nudge** — when a large tool result (a full file read, a big Bash dump) is sitting
+  un-compacted in a session's context, inflating every subsequent turn, the row flags it and the hover
+  panel offers a one-click `/compact`.
 - **Cost per session**, via [`ccusage`](https://github.com/ryoppippi/ccusage). **Cache-hit ratio per
   session**, computed directly from the transcript's own token counts — no `ccusage` involved.
 - **Codex session rows** — cached-input ratio, raw input/output/reasoning token totals, model, effort,
@@ -40,8 +50,8 @@ timestamp.
   Claude Code's terminal as if typed, never run automatically.
 - **Warnings before a session goes cold**: a top-of-screen banner plus a system notification, with
   quick-action buttons, timed to scale with how much there is to read and how long you've been away.
-- **Settings window** (TTL threshold, refresh interval, notification lead time, Ghostty toggle), separate
-  from the dropdown.
+- **Settings window** (menu-bar mode, refresh interval, expiring-soon threshold, notification lead time,
+  Ghostty toggle, keep-alive caps), separate from the dropdown.
 
 ## Build & run
 

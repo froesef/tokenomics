@@ -10,6 +10,11 @@ final class SessionListViewModel: ObservableObject {
     @Published private(set) var now: Date = .init()
     @Published private(set) var dependencyWarnings: [String] = []
 
+    /// Today's savings/waste meter (see MeterStripView), recomputed from the transcripts on every rescan —
+    /// no separate persistence, since the transcripts are the persistence. "Today" = the last 24h, matching
+    /// the transcript scan window (TranscriptWatcher.recencyWindow).
+    @Published private(set) var meter = SavingsMeter()
+
     let settings: SettingsStore
     let ghostty: TerminalController
 
@@ -205,6 +210,10 @@ final class SessionListViewModel: ObservableObject {
             warnings.append("No token-savings CLI (e.g. rtk) found — consider installing one to track Bash token savings")
         }
         dependencyWarnings = warnings
+
+        // Recompute today's savings/waste meter from the freshly-scanned sessions (transcripts are the
+        // persistence — nothing extra is stored). Uses `currentNow` so it's consistent with this scan.
+        meter = SavingsMeter.compute(sessions: sessions, now: currentNow)
 
         // No console/UI elsewhere surfaces this for a menu-bar-only app — run the built .app from
         // Terminal (see README "Debugging") to see per-scan session counts and warnings.
@@ -420,6 +429,16 @@ final class SessionListViewModel: ObservableObject {
     }
 
     var barTitle: String? {
+        // "Lost today" mode shows the waste figure when there's any to show; with nothing lost yet it
+        // falls back to the countdown rather than a bare "🔻 0", so the bar is never uninformative.
+        if settings.menuBarMode == .lostToday, meter.hasLoss {
+            return "🔻 " + Self.compactTokens(meter.lostTokens) + " lost"
+        }
+        return nextExpiryTitle
+    }
+
+    /// The soonest-to-expire session's countdown, or nil if nothing is warm — the original bar behavior.
+    private var nextExpiryTitle: String? {
         guard let soonest = sessions.first(where: { $0.supportsCacheCountdown }) else { return nil }
         let ttl = soonest.effectiveTTL(fallback: settings.ttl)
         let remaining = soonest.remaining(now: now, ttl: ttl)
@@ -437,6 +456,17 @@ final class SessionListViewModel: ObservableObject {
     var busiestActivity: SessionActivity? {
         let byUrgency: [SessionActivity] = [.waitingForInput, .compacting, .running]
         return byUrgency.first { activity in sessions.contains { $0.activity == activity } }
+    }
+
+    /// Compact token count for tight spaces: 128_400 → "128k", 2_100_000 → "2.1M", 950 → "950".
+    static func compactTokens(_ count: Int) -> String {
+        if count >= 1_000_000 {
+            return String(format: "%.1fM", Double(count) / 1_000_000)
+        }
+        if count >= 1_000 {
+            return "\(count / 1_000)k"
+        }
+        return "\(count)"
     }
 
     /// How far back a session's last turn can be and still count toward the menu bar icon's tint. Needed

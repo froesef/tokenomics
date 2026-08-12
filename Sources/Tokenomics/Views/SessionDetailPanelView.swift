@@ -43,6 +43,12 @@ struct SessionDetailPanelView: View {
             sessionInfoSection
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
+            if session.hasBigToolDumpLoaded {
+                Divider()
+                bigDumpNudge
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+            }
             if !session.toolUsage.isEmpty {
                 Divider()
                 usageSections
@@ -137,6 +143,35 @@ struct SessionDetailPanelView: View {
             }
         } else {
             infoRow("Cache", "\(session.cacheCreationTokens) created / \(session.cacheReadTokens) read")
+        }
+    }
+
+    /// Proactive nudge when a large tool result is sitting in context. Estimates tokens from the character
+    /// count (~4 chars/token) and offers the `/compact` paste action directly (only when a tab exists to
+    /// paste into), so acting on the nudge is one click rather than a hunt through the context menu.
+    private var bigDumpNudge: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 4) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.orange)
+                Text("Large output in context")
+                    .font(.system(size: 11, weight: .semibold))
+            }
+            Text("~\(SessionListViewModel.compactTokens((session.loadedToolResultChars ?? 0) / 4)) tokens of tool output are loaded and re-sent every turn. /compact drops it to keep later turns cheaper.")
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if hasOpenTab {
+                Button {
+                    onPasteCommand("/compact")
+                } label: {
+                    Text("Paste /compact")
+                        .font(.system(size: 10, weight: .medium))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.orange)
+            }
         }
     }
 

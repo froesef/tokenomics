@@ -81,6 +81,9 @@ struct SessionRowView: View {
                     if session.supportsCacheCountdown && keepAliveInfo.enabled {
                         keepAliveBadge
                     }
+                    if session.hasBigToolDumpLoaded {
+                        bigDumpBadge
+                    }
                 }
             }
 
@@ -161,6 +164,19 @@ struct SessionRowView: View {
         }
         .foregroundStyle(isHighlighted ? .white : .blue)
         .help("Auto Keep-Alive on — \(keepAliveInfo.pingsUsed)/\(keepAliveInfo.maxPings) pings used")
+    }
+
+    /// Shown when a large tool result is sitting in context, un-compacted — it inflates every subsequent
+    /// turn until `/compact` drops it. The hover detail panel offers the `/compact` paste action.
+    private var bigDumpBadge: some View {
+        HStack(spacing: 2) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 8))
+            Text("big context")
+                .font(.system(size: 9, weight: .medium))
+        }
+        .foregroundStyle(isHighlighted ? .white : .orange)
+        .help("A large tool result (~\(SessionListViewModel.compactTokens((session.loadedToolResultChars ?? 0) / 4)) tokens) is loaded in context, inflating every turn — consider /compact.")
     }
 
     /// Automatic keep-alive stays available to switch on even with a full budget used up — the counter
