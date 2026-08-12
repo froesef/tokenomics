@@ -15,6 +15,7 @@ struct SessionDetailPanelView: View {
     let onFocus: () -> Void
     let onPasteCommand: (String) -> Void
     let onPing: () -> Void
+    let onOpenInCodex: () -> Void
     let onToggleKeepAlive: () -> Void
     /// Reports whether the pointer is over this panel, so SessionListViewModel can keep it open while the
     /// pointer crosses from the row to here — see the doc comment on `rowHoverChanged`.
@@ -24,6 +25,7 @@ struct SessionDetailPanelView: View {
     @State private var hoveringHandoff = false
     @State private var hoveringCompact = false
     @State private var hoveringPing = false
+    @State private var hoveringOpenCodex = false
     @State private var hoveringKeepAlive = false
 
     private var ttl: TimeInterval { session.effectiveTTL(fallback: settings.ttl) }
@@ -90,25 +92,51 @@ struct SessionDetailPanelView: View {
                 infoRow("CLI version", version)
             }
             infoRow("Activity", activityText)
-            infoRow("TTL", "\(Int(ttl / 60)) min (\(session.detectedTTL != nil ? "detected" : "global"))")
+            if session.supportsCacheCountdown {
+                infoRow("TTL", "\(Int(ttl / 60)) min (\(session.detectedTTL != nil ? "detected" : "global"))")
+            }
             infoRow("Last turn", Self.lastTurnFormatter.string(from: session.lastTurnTime))
-            infoRow("Cache", "\(session.cacheCreationTokens) created / \(session.cacheReadTokens) read")
+            cacheRows
             if let ratio = session.cacheHitRatio {
-                infoRow("Hit ratio", String(format: "%.0f%%", ratio * 100))
+                infoRow(session.agentKind == .codex ? "Cached input" : "Hit ratio", String(format: "%.0f%%", ratio * 100))
             }
             if let cost = session.cost {
                 infoRow("Cost", String(format: "$%.2f", cost))
             }
-            infoRow("Ghostty tab", hasOpenTab ? "open" : "not found")
-            infoRow("Process", processDescription)
+            if session.agentKind == .claudeCode {
+                infoRow("Ghostty tab", hasOpenTab ? "open" : "not found")
+                infoRow("Process", processDescription)
+            }
             if let rtkStats = session.rtkStats {
                 infoRow("RTK savings", rtkSavingsText(rtkStats))
             }
             if let charCount = session.lastVisibleCharCount {
                 infoRow("Last output", "\(charCount) chars")
             }
-            infoRow("Last active", lastActiveText)
-            infoRow("Auto Keep-Alive", keepAliveInfoText)
+            if session.agentKind == .claudeCode {
+                infoRow("Last active", lastActiveText)
+                infoRow("Auto Keep-Alive", keepAliveInfoText)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var cacheRows: some View {
+        if session.agentKind == .codex {
+            if let input = session.totalInputTokens {
+                infoRow("Input tokens", "\(input)")
+            }
+            if let cached = session.cachedInputTokens {
+                infoRow("Cached tokens", "\(cached)")
+            }
+            if let output = session.outputTokens {
+                infoRow("Output tokens", "\(output)")
+            }
+            if let reasoning = session.reasoningOutputTokens {
+                infoRow("Reasoning output", "\(reasoning)")
+            }
+        } else {
+            infoRow("Cache", "\(session.cacheCreationTokens) created / \(session.cacheReadTokens) read")
         }
     }
 
@@ -175,11 +203,15 @@ struct SessionDetailPanelView: View {
 
     private var actions: some View {
         VStack(alignment: .leading, spacing: 0) {
-            actionRow("Focus Tab", isHovering: $hoveringFocus, action: onFocus)
-            actionRow("Paste /handoff", isHovering: $hoveringHandoff) { onPasteCommand("/handoff") }
-            actionRow("Paste /compact", isHovering: $hoveringCompact) { onPasteCommand("/compact") }
-            actionRow("Ping (\"still there?\")", isHovering: $hoveringPing, action: onPing)
-            actionRow(keepAliveActionTitle, isHovering: $hoveringKeepAlive, action: onToggleKeepAlive)
+            if session.agentKind == .codex {
+                actionRow("Open in Codex", isHovering: $hoveringOpenCodex, isEnabled: session.codexThreadURL != nil, action: onOpenInCodex)
+            } else {
+                actionRow("Focus Tab", isHovering: $hoveringFocus, action: onFocus)
+                actionRow("Paste /handoff", isHovering: $hoveringHandoff) { onPasteCommand("/handoff") }
+                actionRow("Paste /compact", isHovering: $hoveringCompact) { onPasteCommand("/compact") }
+                actionRow("Ping (\"still there?\")", isHovering: $hoveringPing, action: onPing)
+                actionRow(keepAliveActionTitle, isHovering: $hoveringKeepAlive, action: onToggleKeepAlive)
+            }
         }
     }
 
@@ -189,12 +221,15 @@ struct SessionDetailPanelView: View {
             : "Turn on Auto Keep-Alive"
     }
 
-    private func actionRow(_ title: String, isHovering: Binding<Bool>, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            MenuRowLabel(title: title, isHovering: isHovering.wrappedValue, isEnabled: hasOpenTab)
+    private func actionRow(
+        _ title: String, isHovering: Binding<Bool>, isEnabled: Bool? = nil, action: @escaping () -> Void
+    ) -> some View {
+        let enabled = isEnabled ?? hasOpenTab
+        return Button(action: action) {
+            MenuRowLabel(title: title, isHovering: isHovering.wrappedValue, isEnabled: enabled)
         }
         .buttonStyle(.plain)
-        .disabled(!hasOpenTab)
+        .disabled(!enabled)
         .onHover { isHovering.wrappedValue = $0 }
     }
 

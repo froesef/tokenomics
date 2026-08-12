@@ -180,11 +180,16 @@ final class TranscriptWatcher {
 
         return Session(
             id: url.deletingPathExtension().lastPathComponent,
+            agentKind: .claudeCode,
             workingDirectory: resolvedCwd,
             aiTitle: aiTitle,
             lastTurnTime: lastTurnTime,
             cacheCreationTokens: cacheCreation,
             cacheReadTokens: cacheRead,
+            totalInputTokens: nil,
+            cachedInputTokens: nil,
+            outputTokens: nil,
+            reasoningOutputTokens: nil,
             toolUsage: toolUsage,
             model: lastModel,
             effort: lastEffort,

@@ -20,7 +20,7 @@ final class DetailPanelPresenter {
         session: Session, settings: SettingsStore, hasOpenTab: Bool, timeSinceLastActive: TimeInterval?,
         keepAliveInfo: KeepAliveInfo, anchorWindow: NSWindow?,
         onFocus: @escaping () -> Void, onPasteCommand: @escaping (String) -> Void,
-        onPing: @escaping () -> Void, onToggleKeepAlive: @escaping () -> Void,
+        onPing: @escaping () -> Void, onOpenInCodex: @escaping () -> Void, onToggleKeepAlive: @escaping () -> Void,
         onHoverChanged: @escaping (Bool) -> Void
     ) {
         hide()
@@ -28,7 +28,8 @@ final class DetailPanelPresenter {
         let view = SessionDetailPanelView(
             session: session, settings: settings, hasOpenTab: hasOpenTab, timeSinceLastActive: timeSinceLastActive,
             keepAliveInfo: keepAliveInfo,
-            onFocus: onFocus, onPasteCommand: onPasteCommand, onPing: onPing, onToggleKeepAlive: onToggleKeepAlive,
+            onFocus: onFocus, onPasteCommand: onPasteCommand, onPing: onPing,
+            onOpenInCodex: onOpenInCodex, onToggleKeepAlive: onToggleKeepAlive,
             onHoverChanged: onHoverChanged
         )
         let hostingView = NSHostingView(rootView: view)

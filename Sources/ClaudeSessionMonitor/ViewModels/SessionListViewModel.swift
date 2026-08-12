@@ -14,6 +14,7 @@ final class SessionListViewModel: ObservableObject {
     let ghostty: TerminalController
 
     private let watcher: TranscriptWatcher
+    private let codexWatcher: CodexSessionWatcher
     private let usage = UsageService()
     private let rtk = RTKService()
     private let notifications = NotificationService()
@@ -50,6 +51,7 @@ final class SessionListViewModel: ObservableObject {
         self.settings = settings
         self.ghostty = ghostty
         self.watcher = TranscriptWatcher()
+        self.codexWatcher = CodexSessionWatcher()
 
         notifications.requestAuthorizationIfNeeded()
 
@@ -57,6 +59,10 @@ final class SessionListViewModel: ObservableObject {
             Task { await self?.rescan() }
         }
         watcher.startWatching()
+        codexWatcher.onChange = { [weak self] in
+            Task { await self?.rescan() }
+        }
+        codexWatcher.startWatching()
 
         // Applied again on every `rescan()` too (so a session that later becomes active also picks it
         // up), but also here so switching the setting on takes effect right away rather than waiting for
@@ -107,20 +113,25 @@ final class SessionListViewModel: ObservableObject {
     // MARK: - Rescan (file watch / 15s timer)
 
     func rescan() async {
-        let scanned = watcher.scanAll()
+        let claudeScanned = watcher.scanAll()
+        let codexScanned = codexWatcher.scanAll()
+        let scanned = claudeScanned + codexScanned
         await usage.refresh()
 
         var withCost = scanned
         for i in withCost.indices {
+            guard withCost[i].agentKind == .claudeCode else { continue }
             withCost[i].cost = await usage.cost(forSessionID: withCost[i].id)
         }
 
         await ghostty.refreshAvailability()
         await processMatcher.refresh()
-        await rtk.refresh(workingDirectories: withCost.map(\.workingDirectory))
+        await rtk.refresh(workingDirectories: withCost.filter { $0.agentKind == .claudeCode }.map(\.workingDirectory))
         for i in withCost.indices {
-            withCost[i].livePIDs = await processMatcher.pids(forWorkingDirectory: withCost[i].workingDirectory)
-            withCost[i].rtkStats = await rtk.stats(forWorkingDirectory: withCost[i].workingDirectory)
+            if withCost[i].agentKind == .claudeCode {
+                withCost[i].livePIDs = await processMatcher.pids(forWorkingDirectory: withCost[i].workingDirectory)
+                withCost[i].rtkStats = await rtk.stats(forWorkingDirectory: withCost[i].workingDirectory)
+            }
         }
 
         // Drop sessions whose process has exited — requested directly: a transcript alone doesn't mean the
@@ -128,9 +139,10 @@ final class SessionListViewModel: ObservableObject {
         // process at all: if `pgrep`/`lsof` failed outright (missing binary, unexpected sandboxing), every
         // session would read as "not running" and this filter would silently empty the whole list, which
         // is worse than the stale-but-visible status it replaces.
-        let anyProcessDetected = withCost.contains { $0.isProcessRunning }
+        let anyProcessDetected = withCost.contains { $0.agentKind == .claudeCode && $0.isProcessRunning }
         if anyProcessDetected {
-            withCost = withCost.filter { $0.isProcessRunning }
+            let codexSessions = withCost.filter { $0.agentKind == .codex }
+            var claudeSessions = withCost.filter { $0.agentKind == .claudeCode && $0.isProcessRunning }
 
             // A live PID can't be attributed to a specific transcript (ProcessMatcher matches by working
             // directory only — see Session.livePIDs), so every session sharing a directory with a live
@@ -140,14 +152,15 @@ final class SessionListViewModel: ObservableObject {
             // leftover doesn't show up as a second session (and, via GhosttyController's directory-only
             // matching, a second row that focuses the one real tab).
             var byDirectory: [String: [Session]] = [:]
-            for session in withCost {
+            for session in claudeSessions {
                 byDirectory[session.workingDirectory, default: []].append(session)
             }
-            withCost = byDirectory.values.flatMap { group -> [Session] in
+            claudeSessions = byDirectory.values.flatMap { group -> [Session] in
                 let liveCount = group[0].livePIDs.count
                 guard group.count > liveCount else { return group }
                 return Array(group.sorted { $0.lastTurnTime > $1.lastTurnTime }.prefix(liveCount))
             }
+            withCost = claudeSessions + codexSessions
         }
 
         let ttlFallback = settings.ttl
@@ -157,15 +170,22 @@ final class SessionListViewModel: ObservableObject {
         // history (see recencyWindow above), plain "remaining ascending" would put the *oldest* dead
         // session at the very top (its remaining time is the most negative), burying anything relevant.
         sessions = withCost.sorted { a, b in
+            let aBucket = sortBucket(a, now: currentNow, ttlFallback: ttlFallback)
+            let bBucket = sortBucket(b, now: currentNow, ttlFallback: ttlFallback)
+            if aBucket != bBucket { return aBucket < bBucket }
             let aRemaining = a.remaining(now: currentNow, ttl: a.effectiveTTL(fallback: ttlFallback))
             let bRemaining = b.remaining(now: currentNow, ttl: b.effectiveTTL(fallback: ttlFallback))
             let aCold = aRemaining <= 0
             let bCold = bRemaining <= 0
+            if !a.supportsCacheCountdown || !b.supportsCacheCountdown {
+                return a.lastTurnTime > b.lastTurnTime
+            }
             if aCold != bCold { return !aCold }
             return aCold ? a.lastTurnTime > b.lastTurnTime : aRemaining < bRemaining
         }
 
         for session in sessions {
+            guard session.supportsCacheCountdown else { continue }
             keepAlive.observeTurn(session: session, now: currentNow)
         }
         enableKeepAliveForActiveSessions(now: currentNow)
@@ -181,7 +201,7 @@ final class SessionListViewModel: ObservableObject {
         if settings.ghosttyFocusEnabled && !ghostty.isAvailable {
             warnings.append("Ghostty automation not authorized — focus action disabled")
         }
-        if !sessions.isEmpty, await rtk.isAvailable == false {
+        if sessions.contains(where: { $0.agentKind == .claudeCode }), await rtk.isAvailable == false {
             warnings.append("No token-savings CLI (e.g. rtk) found — consider installing one to track Bash token savings")
         }
         dependencyWarnings = warnings
@@ -214,6 +234,7 @@ final class SessionListViewModel: ObservableObject {
     private func checkNotifications() {
         guard settings.notifyBeforeCold else { return }
         for session in sessions {
+            guard session.supportsCacheCountdown else { continue }
             let ttl = session.effectiveTTL(fallback: settings.ttl)
             let remaining = session.remaining(now: now, ttl: ttl)
             let leadTime = adaptiveLeadTime(for: session)
@@ -232,6 +253,7 @@ final class SessionListViewModel: ObservableObject {
     // MARK: - Focus / paste actions
 
     func focus(_ session: Session) async {
+        guard session.agentKind == .claudeCode else { return }
         guard settings.ghosttyFocusEnabled, ghostty.isAvailable else { return }
         // Close the dropdown right away rather than waiting on the AppleScript round-trip below: the
         // point is to jump straight into the terminal, so the menu shouldn't still be sitting on screen
@@ -242,9 +264,15 @@ final class SessionListViewModel: ObservableObject {
         try? await ghostty.focusTab(workingDirectory: session.workingDirectory, aiTitle: session.aiTitle)
     }
 
+    func openInCodex(_ session: Session) {
+        guard let url = session.codexThreadURL else { return }
+        NSWorkspace.shared.open(url)
+    }
+
     /// Pastes (never executes — see GhosttyController) a command like `/handoff` or `/compact` into the
     /// session's terminal and focuses it, so the user reviews and runs it themselves.
     func pasteCommand(_ text: String, into session: Session) async {
+        guard session.agentKind == .claudeCode else { return }
         guard settings.ghosttyFocusEnabled, ghostty.isAvailable else { return }
         try? await ghostty.pasteText(text, workingDirectory: session.workingDirectory, aiTitle: session.aiTitle)
     }
@@ -282,6 +310,7 @@ final class SessionListViewModel: ObservableObject {
     private func enableKeepAliveForActiveSessions(now: Date) {
         guard settings.keepAliveAllActiveSessions else { return }
         for session in sessions {
+            guard session.supportsCacheCountdown else { continue }
             let ttl = session.effectiveTTL(fallback: settings.ttl)
             if session.remaining(now: now, ttl: ttl) > 0 {
                 keepAlive.autoEnableIfNeeded(for: session)
@@ -296,6 +325,7 @@ final class SessionListViewModel: ObservableObject {
     private func checkKeepAlive() {
         guard settings.ghosttyFocusEnabled, ghostty.isAvailable else { return }
         for session in sessions {
+            guard session.supportsCacheCountdown else { continue }
             guard ghostty.hasOpenTab(workingDirectory: session.workingDirectory) else { continue }
             guard keepAlive.shouldFire(session: session, now: now, settings: settings) else { continue }
             fireKeepAlivePing(for: session)
@@ -350,6 +380,7 @@ final class SessionListViewModel: ObservableObject {
                     onFocus: { Task { await self.focus(session) } },
                     onPasteCommand: { text in Task { await self.pasteCommand(text, into: session) } },
                     onPing: { Task { await self.ping(session) } },
+                    onOpenInCodex: { self.openInCodex(session) },
                     onToggleKeepAlive: { [weak self] in
                         guard let self else { return }
                         self.setKeepAlive(!self.keepAliveInfo(for: session).enabled, for: session)
@@ -383,8 +414,13 @@ final class SessionListViewModel: ObservableObject {
 
     // MARK: - Menu bar presentation
 
+    private func sortBucket(_ session: Session, now: Date, ttlFallback: TimeInterval) -> Int {
+        guard session.supportsCacheCountdown else { return 1 }
+        return session.remaining(now: now, ttl: session.effectiveTTL(fallback: ttlFallback)) > 0 ? 0 : 2
+    }
+
     var barTitle: String? {
-        guard let soonest = sessions.first else { return nil }
+        guard let soonest = sessions.first(where: { $0.supportsCacheCountdown }) else { return nil }
         let ttl = soonest.effectiveTTL(fallback: settings.ttl)
         let remaining = soonest.remaining(now: now, ttl: ttl)
         guard remaining > 0 else { return nil }
@@ -398,7 +434,9 @@ final class SessionListViewModel: ObservableObject {
     private let overallStatusRelevanceWindow: TimeInterval = 3600
 
     var overallStatus: CacheStatus? {
-        let relevant = sessions.filter { now.timeIntervalSince($0.lastTurnTime) < overallStatusRelevanceWindow }
+        let relevant = sessions.filter {
+            $0.supportsCacheCountdown && now.timeIntervalSince($0.lastTurnTime) < overallStatusRelevanceWindow
+        }
         guard !relevant.isEmpty else { return nil }
         let statuses = relevant.map {
             $0.status(now: now, ttl: $0.effectiveTTL(fallback: settings.ttl), expiringSoonThreshold: settings.expiringSoonThresholdSeconds)

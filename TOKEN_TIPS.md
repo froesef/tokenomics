@@ -179,8 +179,8 @@ and only pays the extra context when that specific workflow is actually in use.
 
 OpenAI's `codex` CLI (and the underlying Responses API it's built on) shares the same broad levers
 as Claude Code — caching, context size, model tier, output verbosity — but the mechanics and
-command names differ. Exact current model names and discount percentages move fast enough that
-they're deliberately left out below; treat this section as "where to look," not a pinned number.
+command names differ. Tokenomics reads local `~/.codex` session rollouts for observed token usage, not
+for an exact cache-expiry countdown.
 
 ### 1. Prompt caching is automatic — no manual cache markers
 
@@ -193,10 +193,11 @@ prefix. There's nothing to configure to turn it on.
   (the specific question, a timestamp, freshly-fetched data) last — exactly the same
   cache-placement discipline as Claude Code, just without an explicit marker to place.
 - **Cached tokens are meaningfully cheaper than fresh ones**, though the exact discount varies by
-  model and isn't worth memorizing a specific number for — it moves with pricing updates.
-- **Idle time is still the enemy.** Cache entries are evicted after a period of inactivity
-  (commonly on the order of minutes), so the same "keep working inside a session, don't let it
-  sit cold" advice from tip #1 above applies here too.
+  model and plan. For Codex/ChatGPT credit usage, cached input is a separate, lower-rate token bucket;
+  for API-key Codex, standard API pricing applies.
+- **TTL is not transcript-visible the way Claude Code's is.** Current OpenAI guidance says GPT-5.6+
+  prompt-cache entries last at least 30 minutes, while earlier model in-memory cache behavior is shorter
+  and can vary. Tokenomics therefore shows observed cached-input ratio, not a precise Codex countdown.
 
 ### 2. Context management: `/compact`, `/clear`, `/new`
 
@@ -212,6 +213,8 @@ prefix. There's nothing to configure to turn it on.
 - `/status` shows the active model, approval policy, and how much context capacity is left in the
   current session — the quickest way to see a session heading toward a forced compaction.
 - `/usage` shows account-level token usage and when rate limits reset.
+- Local rollouts record `input_tokens`, `cached_input_tokens`, `output_tokens`, and
+  `reasoning_output_tokens`; those are the fields Tokenomics uses for Codex rows.
 
 ### 4. Model and reasoning-effort selection
 

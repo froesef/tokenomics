@@ -83,8 +83,8 @@ private let codexTips: [TokenTip] = [
     TokenTip(id: 1, icon: "bolt.fill", title: "Prompt caching is automatic", points: [
         "OpenAI's API caches long prompt prefixes automatically once a request is long enough (roughly 1,000+ tokens) — no manual cache_control marker to set.",
         "Only an exact prefix match hits the cache — put stable content (system instructions, AGENTS.md, tool definitions) first and per-turn content last.",
-        "Cached tokens are meaningfully cheaper than fresh ones, though the exact discount varies by model.",
-        "Idle time still evicts the cache after a period of inactivity — the same \"keep the session warm\" advice as Claude Code applies.",
+        "Cached input is priced as its own lower-rate token bucket; with API-key Codex, standard API pricing applies.",
+        "Codex rollouts expose cached-token usage, not a precise cache-expiry timestamp — Tokenomics shows cached-input ratio instead of a countdown.",
     ]),
     TokenTip(id: 2, icon: "rectangle.compress.vertical", title: "Context management: /compact, /clear, /new", points: [
         "/compact summarizes the visible transcript to free up context — the direct analog of Claude Code's /compact.",
@@ -94,6 +94,7 @@ private let codexTips: [TokenTip] = [
     TokenTip(id: 3, icon: "stethoscope", title: "/status, /usage", points: [
         "/status shows the active model, approval policy, and how much context capacity is left in the session.",
         "/usage shows account-level token usage and when rate limits reset.",
+        "Local rollouts record input, cached input, output, and reasoning-output token totals; those power Tokenomics' Codex rows.",
     ]),
     TokenTip(id: 4, icon: "cpu", title: "Model and reasoning-effort selection", points: [
         "/model switches both the active model and its reasoning effort mid-session.",
