@@ -26,14 +26,19 @@ protocol TerminalController: AnyObject {
     /// command, which its own dictionary describes as "as if it was pasted": it does **not** press
     /// Return. The text lands in the terminal's input line for the user to review and run themselves.
     /// Never used for anything that executes on its own — see spec.md §11 ("read-and-focus only") and
-    /// the deviation note on `GhosttyController` for why this stays a manual last step.
-    func pasteText(_ text: String, workingDirectory: String, aiTitle: String?) async throws
+    /// the deviation note on `GhosttyController` for why this stays a manual last step. `activate`
+    /// controls whether the Ghostty window is brought forward afterward: true for /handoff, /compact, and
+    /// other explicit paste actions the user expects to see land; false for the manual Ping button, which
+    /// pastes its keep-alive question quietly without stealing focus from whatever window the user is on.
+    func pasteText(_ text: String, workingDirectory: String, aiTitle: String?, activate: Bool) async throws
     /// Pastes text into the matching terminal, then submits it with a Return key event — unlike
     /// `pasteText`, this one *does* execute whatever was pasted, with no user step in between. This is a
     /// deliberate, narrow exception to the "read-and-focus only" rule above: used exclusively by the
     /// automatic keep-alive feature (see `KeepAliveTracker`) for its one fixed, harmless prompt, for when
     /// the user is genuinely away (a meeting, lunch) and there's no one to press Enter before the cache
-    /// goes cold. No other caller in this app should use this.
+    /// goes cold. No other caller in this app should use this. Unlike every other action here, this one
+    /// never focuses the tab or activates Ghostty — being unattended is exactly why it must stay quiet and
+    /// not steal focus from whatever the user is doing right now.
     func pasteTextAndSubmit(_ text: String, workingDirectory: String, aiTitle: String?) async throws
     /// Re-probes availability and re-fetches the set of open working directories. Availability and open
     /// tabs both change while the app runs, so callers should call this periodically (the ViewModel does,
@@ -269,11 +274,14 @@ final class GhosttyController: TerminalController {
 
     /// Runs a script built around `findTerminalScript`, returning the AppleScript error description (if
     /// any). `bodyIfFound` is the AppleScript run when a match exists (e.g. `focus targetTerminal`),
-    /// inserted inside the `tell` block; `activate application "Ghostty"` always runs afterward so the
-    /// window is actually visible once found (spec.md §8).
-    private static func runMatchAndAct(workingDirectory: String, aiTitle: String?, bodyIfFound: String) async -> String? {
+    /// inserted inside the `tell` block. When `activate` is true (the default), `activate application
+    /// "Ghostty"` runs afterward so the window is actually visible once found (spec.md §8) — callers that
+    /// need to stay quiet in the background (the unattended keep-alive ping) pass `activate: false` so the
+    /// user's current window/app keeps focus.
+    private static func runMatchAndAct(workingDirectory: String, aiTitle: String?, bodyIfFound: String, activate: Bool = true) async -> String? {
         let dir = Self.escape(workingDirectory)
         let hint = Self.escape(aiTitle ?? "")
+        let activateLine = activate ? "if targetTerminal is not missing value then activate application \"Ghostty\"" : ""
         let script = """
         tell application "Ghostty"
             \(Self.findTerminalScript(escapedWorkingDirectory: dir, escapedTitleHint: hint))
@@ -281,7 +289,7 @@ final class GhosttyController: TerminalController {
                 \(bodyIfFound)
             end if
         end tell
-        if targetTerminal is not missing value then activate application "Ghostty"
+        \(activateLine)
         """
         return await Task.detached(priority: .utility) {
             var errorDict: NSDictionary?
@@ -298,14 +306,18 @@ final class GhosttyController: TerminalController {
         }
     }
 
-    func pasteText(_ text: String, workingDirectory: String, aiTitle: String?) async throws {
+    func pasteText(_ text: String, workingDirectory: String, aiTitle: String?, activate: Bool) async throws {
         guard isAvailable else { throw GhosttyError.unavailable }
         let escapedText = Self.escape(text)
+        // `focus targetTerminal` only selects the tab within Ghostty's own window(s); it doesn't bring the
+        // app forward on its own, so it's safe to keep even when `activate` is false — the terminal ends
+        // up showing the pasted text whenever the user does switch to Ghostty, without this call stealing
+        // focus from whatever window they're on right now.
         let body = """
         focus targetTerminal
         input text "\(escapedText)" to targetTerminal
         """
-        if let error = await Self.runMatchAndAct(workingDirectory: workingDirectory, aiTitle: aiTitle, bodyIfFound: body) {
+        if let error = await Self.runMatchAndAct(workingDirectory: workingDirectory, aiTitle: aiTitle, bodyIfFound: body, activate: activate) {
             throw GhosttyError.scriptFailed(error)
         }
     }
@@ -313,15 +325,19 @@ final class GhosttyController: TerminalController {
     /// `send key "enter"` is Ghostty's own scripting command (from the same .sdef as `input text` /
     /// `focus`) for a real keyboard event, gated by the same Automation permission — not a System Events
     /// keystroke-injection workaround, which would need a separate Accessibility grant.
+    ///
+    /// Deliberately skips both `focus targetTerminal` and `activate application "Ghostty"`: `input text`
+    /// and `send key` both take `targetTerminal` explicitly, so neither needs the terminal selected or the
+    /// app frontmost to work. This is the unattended path (see the protocol doc comment above) — it should
+    /// never steal focus from whatever window/app the user is actually looking at.
     func pasteTextAndSubmit(_ text: String, workingDirectory: String, aiTitle: String?) async throws {
         guard isAvailable else { throw GhosttyError.unavailable }
         let escapedText = Self.escape(text)
         let body = """
-        focus targetTerminal
         input text "\(escapedText)" to targetTerminal
         send key "enter" to targetTerminal
         """
-        if let error = await Self.runMatchAndAct(workingDirectory: workingDirectory, aiTitle: aiTitle, bodyIfFound: body) {
+        if let error = await Self.runMatchAndAct(workingDirectory: workingDirectory, aiTitle: aiTitle, bodyIfFound: body, activate: false) {
             throw GhosttyError.scriptFailed(error)
         }
     }
