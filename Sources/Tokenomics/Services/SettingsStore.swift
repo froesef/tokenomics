@@ -80,7 +80,7 @@ final class SettingsStore: ObservableObject {
 
     private init() {
         let d = UserDefaults.standard
-        refreshIntervalSeconds = (d.object(forKey: Keys.refreshInterval) as? Double) ?? 15
+        refreshIntervalSeconds = (d.object(forKey: Keys.refreshInterval) as? Double) ?? 10
         expiringSoonThresholdSeconds = (d.object(forKey: Keys.expiringSoonThreshold) as? Double) ?? 90
         notifyBeforeCold = (d.object(forKey: Keys.notifyBeforeCold) as? Bool) ?? true
         notifyLeadTimeSeconds = (d.object(forKey: Keys.notifyLeadTime) as? Double) ?? 60

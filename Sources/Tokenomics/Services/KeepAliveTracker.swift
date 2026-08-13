@@ -13,8 +13,10 @@ private struct KeepAliveState {
     var enabled = false
     var pingsUsed = 0
     var lastSeenTurnTime: Date
-    /// True from the moment a ping is fired until either its reply is observed in the transcript or
-    /// `ackTimeout` elapses — blocks firing again while one is already in flight.
+    /// True from the moment a ping is fired until either its answer is observed in the transcript or
+    /// `ackTimeout` elapses — blocks firing again while one is already in flight, and marks the window
+    /// during which transcript growth is our own ping's round-trip (prompt echo + answer) rather than the
+    /// user's activity, so it must not reset the ping budget.
     var awaitingOwnPingResponse = false
     var pingFiredAt: Date?
     /// True once the user has explicitly switched this session's keep-alive on or off themselves (row
@@ -41,10 +43,13 @@ final class KeepAliveTracker {
     /// trip (focus + paste + Return) to land before the TTL clock actually runs out, short enough that it
     /// doesn't fire while there's still plenty of runway left (which would burn budget for nothing).
     private static let leadSeconds: TimeInterval = 15
-    /// If a fired ping's reply never shows up in the transcript (paste silently failed, tab closed,
-    /// etc.), stop waiting for it after this long so the session doesn't get stuck permanently unable to
-    /// fire again.
-    private static let ackTimeout: TimeInterval = 30
+    /// If a fired ping's answer never shows up in the transcript (paste silently failed, tab busy or
+    /// closed, etc.), stop waiting for it after this long so the session isn't wedged unable to fire
+    /// again. Kept *below* `leadSeconds` on purpose: an unanswered ping's in-flight flag then clears while
+    /// there's still runway left in the same firing window, so a single silent miss can be retried instead
+    /// of stranding the session cold until the next full TTL cycle. A ping that actually lands clears the
+    /// flag the moment its answer is observed (see `observeTurn`), well before this fallback matters.
+    private static let ackTimeout: TimeInterval = 10
 
     private var states: [String: KeepAliveState] = [:]
 
@@ -84,25 +89,43 @@ final class KeepAliveTracker {
         )
     }
 
-    /// Called once per rescan for every session: reconciles the transcript's actual `lastTurnTime` against
-    /// what this tracker last saw. A change observed while awaiting our own ping's reply is assumed to
-    /// *be* that reply (cleared, budget stands); any other change is real user activity (budget resets —
-    /// they're back). Also clears a stuck `awaitingOwnPingResponse` past `ackTimeout`.
+    /// Called once per rescan for every session: reconciles the transcript against what this tracker last
+    /// saw, and decides whether the ping budget should reset.
+    ///
+    /// While awaiting our own ping's answer, everything the transcript grows by is that ping's round-trip —
+    /// its echoed prompt (a *user* event) followed by the model's reply (an *assistant* turn). Only the
+    /// assistant turn counts as the answer: seeing `lastAssistantTurnTime` advance past when we fired means
+    /// the ping landed, so we clear the in-flight flag but keep the budget (this ping still counts toward
+    /// the cap). Crucially we do *not* treat that same growth as user activity — an earlier version keyed
+    /// off `lastTurnTime` alone and, when the prompt echo and the answer arrived on separate rescans,
+    /// cleared the flag on the echo and then misread the answer as the user returning, silently resetting
+    /// the budget and defeating the cap. A ping that never gets an answer clears via `ackTimeout` so the
+    /// session isn't wedged. Only once we're *not* mid-ping does a fresh `lastTurnTime` mean the user is
+    /// actually back — that, and only that, resets the budget.
     func observeTurn(session: Session, now: Date) {
         guard var state = states[session.id] else { return }
-        if session.lastTurnTime > state.lastSeenTurnTime {
-            if state.awaitingOwnPingResponse {
+        if state.awaitingOwnPingResponse {
+            let firedAt = state.pingFiredAt ?? .distantPast
+            if session.lastAssistantTurnTime > firedAt {
+                // The ping's answer landed — done waiting, budget stands.
                 state.awaitingOwnPingResponse = false
                 state.pingFiredAt = nil
+                state.lastSeenTurnTime = session.lastTurnTime
+            } else if now.timeIntervalSince(firedAt) > Self.ackTimeout {
+                // No answer ever showed up; stop waiting so a later window can try again.
+                state.awaitingOwnPingResponse = false
+                state.pingFiredAt = nil
+                state.lastSeenTurnTime = session.lastTurnTime
             } else {
-                state.pingsUsed = 0
+                // Still mid-ping (e.g. only the prompt echo has landed) — absorb the growth without
+                // mistaking it for the user, so the budget is untouched.
+                state.lastSeenTurnTime = session.lastTurnTime
             }
+        } else if session.lastTurnTime > state.lastSeenTurnTime {
+            // Real user activity while we're not mid-ping: they're back, so the unattended assumption no
+            // longer holds and the budget resets.
+            state.pingsUsed = 0
             state.lastSeenTurnTime = session.lastTurnTime
-        }
-        if state.awaitingOwnPingResponse, let firedAt = state.pingFiredAt,
-           now.timeIntervalSince(firedAt) > Self.ackTimeout {
-            state.awaitingOwnPingResponse = false
-            state.pingFiredAt = nil
         }
         states[session.id] = state
     }
