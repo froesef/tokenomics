@@ -338,14 +338,18 @@ final class SessionListViewModel: ObservableObject {
             guard session.supportsCacheCountdown else { continue }
             guard ghostty.hasOpenTab(workingDirectory: session.workingDirectory) else { continue }
             guard keepAlive.shouldFire(session: session, now: now, settings: settings) else { continue }
-            fireKeepAlivePing(for: session)
+            let remaining = session.remaining(now: now, ttl: session.effectiveTTL(fallback: settings.ttl))
+            fireKeepAlivePing(for: session, remaining: remaining)
         }
     }
 
-    private func fireKeepAlivePing(for session: Session) {
+    private func fireKeepAlivePing(for session: Session, remaining: TimeInterval) {
         keepAlive.recordFireAttempted(for: session.id, now: now)
+        // Log the runway left at fire time: if a cache still goes cold, this says whether the ping was
+        // issued too late (fired with only a second or two left — the failure this lead time guards against)
+        // versus landing on time but the reply never arriving.
         FileHandle.standardError.write(
-            "[Tokenomics] keep-alive: firing for \(session.projectName)\n".data(using: .utf8)!
+            "[Tokenomics] keep-alive: firing for \(session.projectName) (\(Int(remaining))s left)\n".data(using: .utf8)!
         )
         Task { [weak self] in
             guard let self else { return }
