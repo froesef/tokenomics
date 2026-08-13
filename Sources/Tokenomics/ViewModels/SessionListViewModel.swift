@@ -251,6 +251,7 @@ final class SessionListViewModel: ObservableObject {
             if remaining > 0 && remaining <= leadTime {
                 banners.presentIfNeeded(
                     session: session, remaining: remaining,
+                    keepWarmSummary: Self.keepWarmSummary(for: session, ttl: ttl),
                     onSwitch: { [weak self] in Task { await self?.focus(session) } },
                     onHandoff: { [weak self] in Task { await self?.pasteCommand("/handoff", into: session) } },
                     onPing: { [weak self] in Task { await self?.ping(session) } }
@@ -467,6 +468,33 @@ final class SessionListViewModel: ObservableObject {
             return "\(count / 1_000)k"
         }
         return "\(count)"
+    }
+
+    /// A dollar estimate formatted for display — always approximate (these are `Pricing` estimates, never
+    /// exact costs), with a `<$0.01` floor so a tiny-but-nonzero figure never renders as `~$0.00`.
+    static func formatUSDEstimate(_ usd: Double) -> String {
+        usd < 0.005 ? "<$0.01" : String(format: "~$%.2f", usd)
+    }
+
+    /// What keeping this session's cache warm is worth right now: the warm prefix that a cold rewrite would
+    /// have to re-create (`currentContextTokens`), and the dollars that rewrite would cost over a cheap warm
+    /// read (see `Pricing.coldRewriteCostUSD`). This is the *projected* save from acting before the cache
+    /// expires, not a realized total. Nil when no turn has usage yet; `costText` is nil for an unpriced model
+    /// (the token figure still stands — it's exact, the dollars are the estimate).
+    static func keepWarmSaving(for session: Session, ttl: TimeInterval) -> (tokens: Int, costText: String?)? {
+        guard let tokens = session.currentContextTokens, tokens > 0 else { return nil }
+        let costText = Pricing.coldRewriteCostUSD(wastedTokens: tokens, model: session.model, ttl: ttl)
+            .map(formatUSDEstimate)
+        return (tokens, costText)
+    }
+
+    /// One-line "keeping it alive saves …" summary for the expiry banner, or nil when there's nothing to
+    /// quantify yet. Tokens lead (exact); the dollar estimate trails in parentheses when the model is priced.
+    static func keepWarmSummary(for session: Session, ttl: TimeInterval) -> String? {
+        guard let save = keepWarmSaving(for: session, ttl: ttl) else { return nil }
+        let tokens = "~\(compactTokens(save.tokens)) tokens"
+        guard let cost = save.costText else { return "Keeping it alive saves \(tokens)" }
+        return "Keeping it alive saves \(tokens) (\(cost))"
     }
 
     /// How far back a session's last turn can be and still count toward the menu bar icon's tint. Needed
