@@ -121,6 +121,7 @@ final class CodexSessionWatcher {
             workingDirectory: resolvedCwd,
             aiTitle: nil,
             lastTurnTime: lastTimestamp ?? mtime ?? .distantPast,
+            cacheTouchTime: nil,
             cacheCreationTokens: 0,
             cacheReadTokens: cachedInputTokens ?? 0,
             totalInputTokens: totalInputTokens,

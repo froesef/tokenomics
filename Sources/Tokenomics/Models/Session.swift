@@ -73,6 +73,15 @@ struct Session: Identifiable, Equatable, Sendable {
     /// its own prompt echo when deciding whether the ping landed. `.distantPast` until the first assistant
     /// turn (and for Codex rows, which don't drive keep-alive).
     var lastAssistantTurnTime: Date = .distantPast
+    /// Best-known instant this session's prompt cache was actually read or written — read straight off
+    /// the *first* line of the most recent deduped assistant turn that carried `usage`, not the last line
+    /// in the file. The two differ whenever a turn's response takes a while to finish (extended thinking,
+    /// a long tool round-trip): the real cache touch happens during prefill, near when the turn *started*,
+    /// well before its last content block lands — anchoring on completion time would overstate how fresh
+    /// the cache still is. `nil` means no cache is currently active (e.g. right after `/compact` or
+    /// `/clear`, before the next turn writes a fresh one) — `remaining()` treats that as already expired,
+    /// since the next turn pays full cache-write price regardless of how long the gap has been.
+    let cacheTouchTime: Date?
     let cacheCreationTokens: Int
     let cacheReadTokens: Int
     /// Codex token totals from `event_msg/token_count` records. For OpenAI usage, `input_tokens` already
@@ -234,7 +243,8 @@ struct Session: Identifiable, Equatable, Sendable {
     }
 
     func remaining(now: Date, ttl: TimeInterval) -> TimeInterval {
-        lastTurnTime.addingTimeInterval(ttl).timeIntervalSince(now)
+        guard let cacheTouchTime else { return 0 }
+        return cacheTouchTime.addingTimeInterval(ttl).timeIntervalSince(now)
     }
 
     func status(now: Date, ttl: TimeInterval, expiringSoonThreshold: TimeInterval) -> CacheStatus {

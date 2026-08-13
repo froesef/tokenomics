@@ -90,6 +90,11 @@ final class TranscriptWatcher {
         var seenRequestIDs = Set<String>()
         var expiryEvents: [CacheExpiryEvent] = []
         var lastTurnAt: Date?          // timestamp of the previous *deduped* assistant turn
+        // Anchor for the cache TTL countdown — see Session.cacheTouchTime. Tracks the same "first line of
+        // the latest deduped assistant turn" instant as `lastTurnAt`, but is also cleared to nil whenever
+        // `/compact` or `/clear` wipes the cache totals below, so the countdown reads as already-expired
+        // rather than freshly touched until the next turn actually writes a cache entry.
+        var cacheTouchTime: Date?
         var sawEarlierCacheActivity = false  // gates out the unavoidable first cache write of a session
         // "Big tool dump" tracking: the largest single tool_result still loaded in context. Reset to 0
         // whenever a `/compact` or `/clear` clears context (handled in updateActivity, same places the
@@ -154,7 +159,7 @@ final class TranscriptWatcher {
             Self.updateActivity(
                 for: obj, lastTimestamp: lastTimestamp,
                 activity: &activity, compactionStartedAt: &compactionStartedAt, pendingCommandName: &pendingCommandName,
-                cacheCreation: &cacheCreation, cacheRead: &cacheRead,
+                cacheCreation: &cacheCreation, cacheRead: &cacheRead, cacheTouchTime: &cacheTouchTime,
                 toolUsage: &toolUsage, lastVisibleCharCount: &lastVisibleCharCount,
                 maxLoadedToolResultChars: &maxLoadedToolResultChars, maxLoadedToolResultToolName: &maxLoadedToolResultToolName
             )
@@ -257,7 +262,10 @@ final class TranscriptWatcher {
                 ))
             }
             if turnCreation > 0 || turnRead > 0 { sawEarlierCacheActivity = true }
-            if let turnTime = lastTimestamp { lastTurnAt = turnTime }
+            if let turnTime = lastTimestamp {
+                lastTurnAt = turnTime
+                cacheTouchTime = turnTime
+            }
         }
 
         let resolvedCwd = workingDirectory ?? Self.inferWorkingDirectory(from: url)
@@ -273,6 +281,7 @@ final class TranscriptWatcher {
             aiTitle: aiTitle,
             lastTurnTime: lastTurnTime,
             lastAssistantTurnTime: lastTurnAt ?? .distantPast,
+            cacheTouchTime: cacheTouchTime,
             cacheCreationTokens: cacheCreation,
             cacheReadTokens: cacheRead,
             totalInputTokens: nil,
@@ -308,7 +317,7 @@ final class TranscriptWatcher {
     private static func updateActivity(
         for obj: [String: Any], lastTimestamp: Date?,
         activity: inout SessionActivity, compactionStartedAt: inout Date?, pendingCommandName: inout String?,
-        cacheCreation: inout Int, cacheRead: inout Int,
+        cacheCreation: inout Int, cacheRead: inout Int, cacheTouchTime: inout Date?,
         toolUsage: inout ToolUsage, lastVisibleCharCount: inout Int?,
         maxLoadedToolResultChars: inout Int, maxLoadedToolResultToolName: inout String?
     ) {
@@ -325,6 +334,9 @@ final class TranscriptWatcher {
                 // The old cache prefix no longer reflects what's actually loaded post-compaction.
                 cacheCreation = 0
                 cacheRead = 0
+                // No cache entry exists yet for the compacted prefix — that only gets written on the next
+                // turn — so the countdown should read as already-expired rather than freshly touched.
+                cacheTouchTime = nil
                 // Compaction drops bulky tool output first, so any big dump is no longer loaded.
                 maxLoadedToolResultChars = 0
                 maxLoadedToolResultToolName = nil
@@ -334,6 +346,7 @@ final class TranscriptWatcher {
                 if pendingCommandName == "/clear" {
                     cacheCreation = 0
                     cacheRead = 0
+                    cacheTouchTime = nil
                     toolUsage = ToolUsage()
                     lastVisibleCharCount = nil
                     maxLoadedToolResultChars = 0
