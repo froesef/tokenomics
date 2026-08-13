@@ -132,6 +132,7 @@ final class CodexSessionWatcher {
             effort: lastEffort,
             version: lastVersion,
             lastVisibleCharCount: lastVisibleCharCount,
+            currentContextTokens: totalInputTokens,
             activity: .idle,
             compactionStartedAt: nil,
             detectedTTL: nil,
