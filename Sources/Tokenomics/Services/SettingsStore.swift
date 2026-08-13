@@ -41,6 +41,14 @@ final class SettingsStore: ObservableObject {
     @Published var keepAliveMaxPings60m: Double {
         didSet { UserDefaults.standard.set(keepAliveMaxPings60m, forKey: Keys.keepAliveMaxPings60m) }
     }
+    /// How many seconds before a cache would go cold to fire the automatic keep-alive ping (see
+    /// `KeepAliveTracker.shouldFire`). Generous by default: the ping must survive the AppleScript round
+    /// trip, the model answering, and the occasional retry after a ping that didn't land — too small a
+    /// value issues the ping right as the timer runs out and the cache goes cold anyway. Exposed as a text
+    /// field mainly so it can be set high for debugging (watch a ping fire long before expiry).
+    @Published var keepAliveLeadSeconds: Double {
+        didSet { UserDefaults.standard.set(keepAliveLeadSeconds, forKey: Keys.keepAliveLeadSeconds) }
+    }
     /// When on, every session with time left on its cache gets its per-session Auto Keep-Alive switched
     /// on automatically — requested directly, so a session doesn't go cold for lack of a manual toggle
     /// just because the user forgot, or a new session was never touched. See
@@ -74,6 +82,7 @@ final class SettingsStore: ObservableObject {
         static let ghosttyFocusEnabled = "ghosttyFocusEnabled"
         static let keepAliveMaxPings5m = "keepAliveMaxPings5m"
         static let keepAliveMaxPings60m = "keepAliveMaxPings60m"
+        static let keepAliveLeadSeconds = "keepAliveLeadSeconds"
         static let keepAliveAllActiveSessions = "keepAliveAllActiveSessions"
         static let menuBarMode = "menuBarMode"
     }
@@ -87,6 +96,7 @@ final class SettingsStore: ObservableObject {
         ghosttyFocusEnabled = (d.object(forKey: Keys.ghosttyFocusEnabled) as? Bool) ?? true
         keepAliveMaxPings5m = (d.object(forKey: Keys.keepAliveMaxPings5m) as? Double) ?? 10
         keepAliveMaxPings60m = (d.object(forKey: Keys.keepAliveMaxPings60m) as? Double) ?? 3
+        keepAliveLeadSeconds = (d.object(forKey: Keys.keepAliveLeadSeconds) as? Double) ?? 30
         keepAliveAllActiveSessions = (d.object(forKey: Keys.keepAliveAllActiveSessions) as? Bool) ?? false
         menuBarMode = (d.string(forKey: Keys.menuBarMode)).flatMap(MenuBarMode.init(rawValue:)) ?? .nextExpiry
     }

@@ -39,16 +39,13 @@ private struct KeepAliveState {
 /// since that means they're back and the unattended assumption no longer holds.
 @MainActor
 final class KeepAliveTracker {
-    /// How long before a cache would go cold to fire the ping. Deliberately generous: the ping has to
-    /// survive the AppleScript round trip (focus + paste + Return), the model actually answering, *and* the
-    /// occasional retry after a ping that didn't land — a retry only clears after `ackTimeout` (10s), so
-    /// the last possible fire in the window is at `leadSeconds − ackTimeout` seconds of runway. At the old
-    /// 15s a retry fired with ~5s left and, plus the round trip, landed *at* expiry — a reported case where
-    /// the ping was issued right as the timer ran out and the cache went cold anyway. 45s leaves a first
-    /// ping ~43s of runway and even a retry ~33s, comfortably clear of expiry, while firing this much
-    /// earlier only refreshes the cache slightly sooner each cycle (still one ping per cycle when answered)
-    /// — negligible against any TTL. The trade-off is bounded by the per-bucket ping cap.
-    private static let leadSeconds: TimeInterval = 45
+    // How long before a cache would go cold to fire the ping is user-configurable — see
+    // `SettingsStore.keepAliveLeadSeconds` (default 30s) and its use in `shouldFire`. It's deliberately
+    // generous: the ping has to survive the AppleScript round trip (focus + paste + Return), the model
+    // actually answering, *and* the occasional retry after a ping that didn't land — a retry only clears
+    // after `ackTimeout`, so the last possible fire in the window is at `leadSeconds − ackTimeout` seconds
+    // of runway. Too small a value (the original hardcoded 15s) issued the retry with ~5s left and, plus
+    // the round trip, landed *at* expiry — the reported case where the cache went cold anyway.
     /// If a fired ping's answer never shows up in the transcript (paste silently failed, tab busy or
     /// closed, etc.), stop waiting for it after this long so the session isn't wedged unable to fire
     /// again. Kept *below* `leadSeconds` on purpose: an unanswered ping's in-flight flag then clears while
@@ -146,7 +143,7 @@ final class KeepAliveTracker {
         guard let state = states[session.id], state.enabled, !state.awaitingOwnPingResponse else { return false }
         let ttl = session.effectiveTTL(fallback: settings.ttl)
         let remaining = session.remaining(now: now, ttl: ttl)
-        guard remaining > 0, remaining <= Self.leadSeconds else { return false }
+        guard remaining > 0, remaining <= settings.keepAliveLeadSeconds else { return false }
         return state.pingsUsed < maxPings(for: ttl, settings: settings)
     }
 
