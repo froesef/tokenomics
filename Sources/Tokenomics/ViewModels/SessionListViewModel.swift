@@ -113,6 +113,7 @@ final class SessionListViewModel: ObservableObject {
         now = Date()
         checkNotifications()
         checkKeepAlive()
+        checkKeepAliveExhaustion()
     }
 
     // MARK: - Rescan (file watch / 15s timer)
@@ -251,6 +252,7 @@ final class SessionListViewModel: ObservableObject {
             if remaining > 0 && remaining <= leadTime {
                 banners.presentIfNeeded(
                     session: session, remaining: remaining,
+                    keepWarmSummary: Self.keepWarmSummary(for: session, ttl: ttl),
                     onSwitch: { [weak self] in Task { await self?.focus(session) } },
                     onHandoff: { [weak self] in Task { await self?.pasteCommand("/handoff", into: session) } },
                     onPing: { [weak self] in Task { await self?.ping(session) } }
@@ -337,14 +339,41 @@ final class SessionListViewModel: ObservableObject {
             guard session.supportsCacheCountdown else { continue }
             guard ghostty.hasOpenTab(workingDirectory: session.workingDirectory) else { continue }
             guard keepAlive.shouldFire(session: session, now: now, settings: settings) else { continue }
-            fireKeepAlivePing(for: session)
+            let remaining = session.remaining(now: now, ttl: session.effectiveTTL(fallback: settings.ttl))
+            fireKeepAlivePing(for: session, remaining: remaining)
         }
     }
 
-    private func fireKeepAlivePing(for session: Session) {
+    /// Per-second check (see `tick`): the first tick after an enabled session has spent its whole ping
+    /// budget while still warm, raise the distinct "auto keep-alive is done — extend it yourself or it goes
+    /// cold, at a cost of ~$Y" warning. The tracker gates this to once per warm period (see
+    /// `KeepAliveTracker.consumeExhaustionWarning`); the `remaining > 0` guard here keeps the warning to
+    /// sessions there's still time to save, so it never fires uselessly on an already-cold session.
+    private func checkKeepAliveExhaustion() {
+        for session in sessions {
+            guard session.supportsCacheCountdown else { continue }
+            let ttl = session.effectiveTTL(fallback: settings.ttl)
+            let remaining = session.remaining(now: now, ttl: ttl)
+            guard remaining > 0 else { continue }
+            guard keepAlive.consumeExhaustionWarning(for: session, settings: settings) else { continue }
+            let info = keepAlive.info(for: session, settings: settings)
+            banners.presentMaxExtensions(
+                session: session, remaining: remaining, used: info.pingsUsed, cap: info.maxPings,
+                coldCostSummary: Self.coldCostSummary(for: session, ttl: ttl),
+                onSwitch: { [weak self] in Task { await self?.focus(session) } },
+                onHandoff: { [weak self] in Task { await self?.pasteCommand("/handoff", into: session) } },
+                onPing: { [weak self] in Task { await self?.ping(session) } }
+            )
+        }
+    }
+
+    private func fireKeepAlivePing(for session: Session, remaining: TimeInterval) {
         keepAlive.recordFireAttempted(for: session.id, now: now)
+        // Log the runway left at fire time: if a cache still goes cold, this says whether the ping was
+        // issued too late (fired with only a second or two left — the failure this lead time guards against)
+        // versus landing on time but the reply never arriving.
         FileHandle.standardError.write(
-            "[Tokenomics] keep-alive: firing for \(session.projectName)\n".data(using: .utf8)!
+            "[Tokenomics] keep-alive: firing for \(session.projectName) (\(Int(remaining))s left)\n".data(using: .utf8)!
         )
         Task { [weak self] in
             guard let self else { return }
@@ -467,6 +496,43 @@ final class SessionListViewModel: ObservableObject {
             return "\(count / 1_000)k"
         }
         return "\(count)"
+    }
+
+    /// A dollar estimate formatted for display — always approximate (these are `Pricing` estimates, never
+    /// exact costs), with a `<$0.01` floor so a tiny-but-nonzero figure never renders as `~$0.00`.
+    static func formatUSDEstimate(_ usd: Double) -> String {
+        usd < 0.005 ? "<$0.01" : String(format: "~$%.2f", usd)
+    }
+
+    /// What keeping this session's cache warm is worth right now: the warm prefix that a cold rewrite would
+    /// have to re-create (`currentContextTokens`), and the dollars that rewrite would cost over a cheap warm
+    /// read (see `Pricing.coldRewriteCostUSD`). This is the *projected* save from acting before the cache
+    /// expires, not a realized total. Nil when no turn has usage yet; `costText` is nil for an unpriced model
+    /// (the token figure still stands — it's exact, the dollars are the estimate).
+    static func keepWarmSaving(for session: Session, ttl: TimeInterval) -> (tokens: Int, costText: String?)? {
+        guard let tokens = session.currentContextTokens, tokens > 0 else { return nil }
+        let costText = Pricing.coldRewriteCostUSD(wastedTokens: tokens, model: session.model, ttl: ttl)
+            .map(formatUSDEstimate)
+        return (tokens, costText)
+    }
+
+    /// One-line "keeping it alive saves …" summary for the expiry banner, or nil when there's nothing to
+    /// quantify yet. Tokens lead (exact); the dollar estimate trails in parentheses when the model is priced.
+    static func keepWarmSummary(for session: Session, ttl: TimeInterval) -> String? {
+        guard let save = keepWarmSaving(for: session, ttl: ttl) else { return nil }
+        let tokens = "~\(compactTokens(save.tokens)) tokens"
+        guard let cost = save.costText else { return "Keeping it alive saves \(tokens)" }
+        return "Keeping it alive saves \(tokens) (\(cost))"
+    }
+
+    /// The cost framing of the same figure, for the max-extensions warning banner: what letting this cache
+    /// go cold now would cost to rewrite on the next turn. Nil when no turn has usage yet; the dollar
+    /// estimate is dropped for an unpriced model, leaving the exact token figure.
+    static func coldCostSummary(for session: Session, ttl: TimeInterval) -> String? {
+        guard let save = keepWarmSaving(for: session, ttl: ttl) else { return nil }
+        let tokens = "~\(compactTokens(save.tokens)) tokens"
+        guard let cost = save.costText else { return "Going cold now re-costs \(tokens)" }
+        return "Going cold now costs \(cost) (\(tokens)) to rewrite"
     }
 
     /// How far back a session's last turn can be and still count toward the menu bar icon's tint. Needed

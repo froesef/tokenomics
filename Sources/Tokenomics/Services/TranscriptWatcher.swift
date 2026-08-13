@@ -272,6 +272,7 @@ final class TranscriptWatcher {
             workingDirectory: resolvedCwd,
             aiTitle: aiTitle,
             lastTurnTime: lastTurnTime,
+            lastAssistantTurnTime: lastTurnAt ?? .distantPast,
             cacheCreationTokens: cacheCreation,
             cacheReadTokens: cacheRead,
             totalInputTokens: nil,

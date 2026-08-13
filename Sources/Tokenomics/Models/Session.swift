@@ -67,6 +67,12 @@ struct Session: Identifiable, Equatable, Sendable {
     /// has generated one, which usually happens after the first exchange.
     let aiTitle: String?
     let lastTurnTime: Date
+    /// Timestamp of this session's most recent *assistant* turn (a response that carried `usage`), as
+    /// opposed to `lastTurnTime`, which also advances on user events — including the echoed prompt of an
+    /// auto keep-alive ping. KeepAliveTracker relies on this to tell a ping's actual *answer* apart from
+    /// its own prompt echo when deciding whether the ping landed. `.distantPast` until the first assistant
+    /// turn (and for Codex rows, which don't drive keep-alive).
+    var lastAssistantTurnTime: Date = .distantPast
     let cacheCreationTokens: Int
     let cacheReadTokens: Int
     /// Codex token totals from `event_msg/token_count` records. For OpenAI usage, `input_tokens` already

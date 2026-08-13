@@ -16,22 +16,46 @@ final class BannerPresenter {
     private var activeWindows: [String: NSWindow] = [:]
 
     func presentIfNeeded(
-        session: Session, remaining: TimeInterval,
+        session: Session, remaining: TimeInterval, keepWarmSummary: String?,
         onSwitch: @escaping () -> Void, onHandoff: @escaping () -> Void, onPing: @escaping () -> Void
     ) {
         guard shownForTurn[session.id] != session.lastTurnTime else { return }
         shownForTurn[session.id] = session.lastTurnTime
-        present(session: session, remaining: remaining, onSwitch: onSwitch, onHandoff: onHandoff, onPing: onPing)
+        present(
+            windowKey: session.id, session: session, remaining: remaining, kind: .expiringSoon,
+            detailSummary: keepWarmSummary,
+            onSwitch: onSwitch, onHandoff: onHandoff, onPing: onPing
+        )
+    }
+
+    /// The distinct "auto keep-alive has spent its whole budget" warning — a session it was keeping warm
+    /// won't get any more automatic pings, so it goes cold unless the user extends it by hand. Deduped by
+    /// the tracker (see `KeepAliveTracker.consumeExhaustionWarning`), which only lets this fire once per
+    /// warm period, so there's no per-turn guard here. Shown in its own window keyed apart from the ordinary
+    /// expiry banner so both can be on screen at once for the same session.
+    func presentMaxExtensions(
+        session: Session, remaining: TimeInterval, used: Int, cap: Int, coldCostSummary: String?,
+        onSwitch: @escaping () -> Void, onHandoff: @escaping () -> Void, onPing: @escaping () -> Void
+    ) {
+        present(
+            windowKey: session.id + ":maxext", session: session, remaining: remaining,
+            kind: .maxExtensionsReached(used: used, cap: cap), detailSummary: coldCostSummary,
+            onSwitch: onSwitch, onHandoff: onHandoff, onPing: onPing
+        )
     }
 
     private func present(
-        session: Session, remaining: TimeInterval,
+        windowKey: String, session: Session, remaining: TimeInterval, kind: BannerKind,
+        detailSummary: String?,
         onSwitch: @escaping () -> Void, onHandoff: @escaping () -> Void, onPing: @escaping () -> Void
     ) {
-        let id = session.id
+        dismiss(windowKey)
+        let id = windowKey
         let view = BannerView(
             projectName: session.projectName,
-            remainingText: formatCountdown(remaining),
+            expiry: Date().addingTimeInterval(remaining),
+            kind: kind,
+            detailSummary: detailSummary,
             onSwitch: { [weak self] in
                 onSwitch()
                 self?.dismiss(id)
@@ -81,50 +105,120 @@ final class BannerPresenter {
         activeWindows[id]?.close()
         activeWindows[id] = nil
     }
+}
 
-    private func formatCountdown(_ interval: TimeInterval) -> String {
-        let total = max(0, Int(interval))
-        return String(format: "%d:%02d", total / 60, total % 60)
-    }
+/// Which flavor of banner is on screen — an ordinary "about to go cold" nudge, or the louder warning that
+/// automatic keep-alive has spent its whole budget for this warm period and the session will go cold unless
+/// the user extends it by hand. Drives the header icon/tint and the headline wording.
+enum BannerKind: Equatable {
+    case expiringSoon
+    /// Carries the used/cap ping counts for the "N/N extensions used" line.
+    case maxExtensionsReached(used: Int, cap: Int)
 }
 
 private struct BannerView: View {
     let projectName: String
-    let remainingText: String
+    /// The moment this session's cache is projected to go cold, fixed when the banner opened. The
+    /// countdown text is derived from it live (see the `TimelineView` below) rather than pre-formatted,
+    /// so it ticks down second by second while the banner is up instead of freezing at its open-time
+    /// value — this banner is its own borderless window with no tie to the view model's per-second tick,
+    /// so it has to drive its own clock.
+    let expiry: Date
+    let kind: BannerKind
+    /// The secondary money/token line under the headline — "Keeping it alive saves ~N tokens (~$X)" for
+    /// the expiring-soon nudge, or "Going cold now would cost ~$X …" for the max-extensions warning. A fixed
+    /// snapshot from open time (unlike the countdown, it doesn't need to tick). Nil when there's nothing to
+    /// quantify yet.
+    let detailSummary: String?
     let onSwitch: () -> Void
     let onHandoff: () -> Void
     let onPing: () -> Void
     let onDismiss: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top) {
-                Image(systemName: "timer")
-                    .foregroundStyle(.orange)
-                Text("\(projectName) cache expiring in \(remainingText)")
-                    .font(.system(size: 12, weight: .semibold))
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 0)
-                Button(action: onDismiss) {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.secondary)
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            let remaining = expiry.timeIntervalSince(context.date)
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .top) {
+                    Image(systemName: headerSymbol)
+                        .foregroundStyle(headerColor)
+                    Text(message(remaining: remaining))
+                        .font(.system(size: 12, weight: .semibold))
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                    Button(action: onDismiss) {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
+                if let detailSummary {
+                    HStack(spacing: 4) {
+                        Image(systemName: detailSymbol)
+                            .font(.system(size: 10))
+                            .foregroundStyle(detailColor)
+                        Text(detailSummary)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                HStack {
+                    Spacer()
+                    Button("Ping", action: onPing)
+                        .controlSize(.small)
+                        .help("Pastes a trivial \"still there?\" question — a nop keep-alive, not a real handoff")
+                    Button("Handoff", action: onHandoff)
+                        .controlSize(.small)
+                        .help("Pastes /handoff into the terminal — doesn't run it for you")
+                    Button("Switch to Session", action: onSwitch)
+                        .controlSize(.small)
+                }
             }
-            HStack {
-                Spacer()
-                Button("Ping", action: onPing)
-                    .controlSize(.small)
-                    .help("Pastes a trivial \"still there?\" question — a nop keep-alive, not a real handoff")
-                Button("Handoff", action: onHandoff)
-                    .controlSize(.small)
-                    .help("Pastes /handoff into the terminal — doesn't run it for you")
-                Button("Switch to Session", action: onSwitch)
-                    .controlSize(.small)
-            }
+            .padding(12)
+            .frame(width: 360)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
         }
-        .padding(12)
-        .frame(width: 360)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private var headerSymbol: String {
+        switch kind {
+        case .expiringSoon: return "timer"
+        case .maxExtensionsReached: return "bolt.slash.fill"
+        }
+    }
+
+    private var headerColor: Color {
+        switch kind {
+        case .expiringSoon: return .orange
+        case .maxExtensionsReached: return .red
+        }
+    }
+
+    private var detailSymbol: String {
+        switch kind {
+        case .expiringSoon: return "leaf.fill"
+        case .maxExtensionsReached: return "dollarsign.circle.fill"
+        }
+    }
+
+    private var detailColor: Color {
+        switch kind {
+        case .expiringSoon: return .green
+        case .maxExtensionsReached: return .orange
+        }
+    }
+
+    private func message(remaining: TimeInterval) -> String {
+        let clock = String(format: "%d:%02d", max(0, Int(remaining)) / 60, max(0, Int(remaining)) % 60)
+        switch kind {
+        case .expiringSoon:
+            guard remaining > 0 else { return "\(projectName) cache went cold" }
+            return "\(projectName) cache expiring in \(clock)"
+        case .maxExtensionsReached(let used, let cap):
+            guard remaining > 0 else {
+                return "\(projectName) went cold — auto keep-alive was exhausted (\(used)/\(cap) extensions used)"
+            }
+            return "\(projectName): auto keep-alive used all \(used)/\(cap) extensions — cache goes cold in \(clock) unless you extend it manually"
+        }
     }
 }

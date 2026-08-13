@@ -75,6 +75,7 @@ struct SessionRowView: View {
                             .foregroundStyle(fg(.secondary))
                             .help("TTL detected from this session's own cache_creation usage, not the global setting")
                     }
+                    keepWarmSaveBadge
                     Text(hitRatioText)
                         .font(.system(size: 11))
                         .foregroundStyle(fg(.secondary))
@@ -192,6 +193,33 @@ struct SessionRowView: View {
     private var countdownText: String {
         guard session.supportsCacheCountdown else { return "last \(ageText)" }
         return remaining > 0 ? SessionListViewModel.format(remaining) : "cold"
+    }
+
+    /// The projected save from keeping this session's cache warm (see
+    /// `SessionListViewModel.keepWarmSaving`) — nil for a cold session (nothing warm left to protect), a
+    /// Codex row (no cache countdown), or before the first turn with usage.
+    private var keepWarmSave: (tokens: Int, costText: String?)? {
+        guard session.supportsCacheCountdown, remaining > 0 else { return nil }
+        return SessionListViewModel.keepWarmSaving(for: session, ttl: ttl)
+    }
+
+    /// Shown next to the countdown while a session is still warm: the tokens (and, when the model is priced,
+    /// the dollars) a cold-cache rewrite would cost on the next turn — i.e. what pinging/handing off before
+    /// expiry saves. Requested directly, so the cost of letting it go cold is visible at a glance, not just
+    /// in the aggregate meter.
+    @ViewBuilder
+    private var keepWarmSaveBadge: some View {
+        if let save = keepWarmSave {
+            HStack(spacing: 2) {
+                Image(systemName: "leaf.fill")
+                    .font(.system(size: 8))
+                Text(save.costText.map { "\(SessionListViewModel.compactTokens(save.tokens)) · \($0)" }
+                    ?? SessionListViewModel.compactTokens(save.tokens))
+                    .font(.system(size: 9))
+            }
+            .foregroundStyle(isHighlighted ? .white : .green)
+            .help("Keeping this cache warm avoids re-writing ~\(SessionListViewModel.compactTokens(save.tokens)) tokens at cache-write price on the next turn\(save.costText.map { " — about \($0)" } ?? "").")
+        }
     }
 
     private var hitRatioText: String {

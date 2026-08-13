@@ -80,6 +80,21 @@ struct SettingsView: View {
                 }
 
                 LabeledContent {
+                    HStack(spacing: 4) {
+                        TextField("", value: $settings.keepAliveLeadSeconds, format: .number)
+                            .textFieldStyle(.roundedBorder)
+                            .multilineTextAlignment(.trailing)
+                            .frame(width: 60)
+                        Text("s").foregroundStyle(.secondary)
+                    }
+                } label: {
+                    SettingLabel(
+                        title: "Lead time",
+                        description: "Fire the keep-alive ping this many seconds before a session's cache would go cold. Higher is safer — it leaves runway for the paste, the reply, and a retry if one is needed; too low and the ping lands right as the cache expires. Set it high to watch pings fire early while debugging. Default 30s."
+                    )
+                }
+
+                LabeledContent {
                     Stepper(value: $settings.keepAliveMaxPings5m, in: 1...30, step: 1) {
                         Text("\(Int(settings.keepAliveMaxPings5m))×")
                     }
