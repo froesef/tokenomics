@@ -19,6 +19,11 @@ private struct KeepAliveState {
     /// user's activity, so it must not reset the ping budget.
     var awaitingOwnPingResponse = false
     var pingFiredAt: Date?
+    /// True once the "auto keep-alive has used its whole budget for this warm period" warning has been
+    /// surfaced, so it's shown exactly once per exhaustion rather than every tick while the session sits
+    /// at the cap. Cleared whenever the budget resets (re-enabled, or the user's own activity is seen),
+    /// so a fresh warm period that exhausts again warns again.
+    var exhaustionWarned = false
     /// True once the user has explicitly switched this session's keep-alive on or off themselves (row
     /// menu, detail panel). Once set, `autoEnableIfNeeded` leaves this session alone — otherwise a manual
     /// "turn off" while `SettingsStore.keepAliveAllActiveSessions` is on got silently forced back on at
@@ -78,6 +83,7 @@ final class KeepAliveTracker {
             state.pingsUsed = 0
             state.awaitingOwnPingResponse = false
             state.pingFiredAt = nil
+            state.exhaustionWarned = false
             state.lastSeenTurnTime = session.lastTurnTime
         }
         states[session.id] = state
@@ -128,6 +134,7 @@ final class KeepAliveTracker {
             // Real user activity while we're not mid-ping: they're back, so the unattended assumption no
             // longer holds and the budget resets.
             state.pingsUsed = 0
+            state.exhaustionWarned = false
             state.lastSeenTurnTime = session.lastTurnTime
         }
         states[session.id] = state
@@ -145,6 +152,21 @@ final class KeepAliveTracker {
         let remaining = session.remaining(now: now, ttl: ttl)
         guard remaining > 0, remaining <= settings.keepAliveLeadSeconds else { return false }
         return state.pingsUsed < maxPings(for: ttl, settings: settings)
+    }
+
+    /// Returns true exactly once per warm period, the first tick after an enabled session has spent its
+    /// whole ping budget — the signal to raise the "auto keep-alive is done, extend it yourself or it goes
+    /// cold" warning. Marks the state as warned so later ticks stay quiet until the budget resets (see
+    /// `exhaustionWarned`). Deliberately does not check remaining time: the caller only calls this while a
+    /// session is still warm, so the warning lands with runway left to act, not after it's already cold.
+    func consumeExhaustionWarning(for session: Session, settings: SettingsStore) -> Bool {
+        guard var state = states[session.id], state.enabled, !state.exhaustionWarned,
+              !state.awaitingOwnPingResponse else { return false }
+        let ttl = session.effectiveTTL(fallback: settings.ttl)
+        guard state.pingsUsed >= maxPings(for: ttl, settings: settings) else { return false }
+        state.exhaustionWarned = true
+        states[session.id] = state
+        return true
     }
 
     func recordFireAttempted(for sessionID: String, now: Date) {
