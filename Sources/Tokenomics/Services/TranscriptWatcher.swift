@@ -95,6 +95,19 @@ final class TranscriptWatcher {
         // whenever a `/compact` or `/clear` clears context (handled in updateActivity, same places the
         // cache totals reset), since a compacted-away dump no longer inflates later turns.
         var maxLoadedToolResultChars = 0
+        // Which tool call produced the current `maxLoadedToolResultChars` dump, for the detail-panel
+        // nudge — resolved via `toolUseNames` below, and reset alongside the char count.
+        var maxLoadedToolResultToolName: String?
+        // tool_use id -> tool name, so a later tool_result (which only carries the id) can be attributed
+        // back to the call that produced it. Ids are unique for the life of a session, so this is never
+        // reset even across /compact or /clear.
+        var toolUseNames: [String: String] = [:]
+        // Total context tokens sent on the most recent (deduped) turn — `cache_creation_input_tokens +
+        // cache_read_input_tokens` for that one turn, i.e. the whole prefix resent that request. Unlike
+        // `cacheCreation`/`cacheRead` above (which sum every turn's cache traffic since the last
+        // clear/compact), this is overwritten each turn so it reflects current context size, not
+        // lifetime cache traffic.
+        var lastTurnContextTokens = 0
         // Name of the slash command currently in flight (parsed from a "<command-name>/x</command-name>"
         // echo), so that when its closing `local_command` event arrives we know *which* command just
         // finished — only `/clear` resets the accumulators below.
@@ -143,7 +156,7 @@ final class TranscriptWatcher {
                 activity: &activity, compactionStartedAt: &compactionStartedAt, pendingCommandName: &pendingCommandName,
                 cacheCreation: &cacheCreation, cacheRead: &cacheRead,
                 toolUsage: &toolUsage, lastVisibleCharCount: &lastVisibleCharCount,
-                maxLoadedToolResultChars: &maxLoadedToolResultChars
+                maxLoadedToolResultChars: &maxLoadedToolResultChars, maxLoadedToolResultToolName: &maxLoadedToolResultToolName
             )
 
             // Measure tool_result payloads (user events feeding a tool's output back) for the big-dump
@@ -160,7 +173,11 @@ final class TranscriptWatcher {
                     } else {
                         length = 0
                     }
-                    maxLoadedToolResultChars = max(maxLoadedToolResultChars, length)
+                    if length > maxLoadedToolResultChars {
+                        maxLoadedToolResultChars = length
+                        let toolUseId = block["tool_use_id"] as? String
+                        maxLoadedToolResultToolName = toolUseId.flatMap { toolUseNames[$0] }
+                    }
                 }
             }
 
@@ -177,6 +194,14 @@ final class TranscriptWatcher {
 
             if let content = message["content"] as? [[String: Any]] {
                 Self.accumulateToolUsage(from: content, into: &toolUsage)
+
+                // Remember each tool_use's id -> name so a later tool_result (which only carries the id)
+                // can be attributed back to the call that produced it.
+                for block in content where block["type"] as? String == "tool_use" {
+                    if let id = block["id"] as? String, let name = block["name"] as? String {
+                        toolUseNames[id] = name
+                    }
+                }
 
                 // Only overwrite on a turn that actually said something — a later turn that's pure
                 // tool_use (e.g. mid-tool-round-trip) shouldn't erase what the user last had to read.
@@ -202,6 +227,7 @@ final class TranscriptWatcher {
             let turnRead = (usage["cache_read_input_tokens"] as? Int) ?? 0
             cacheCreation += turnCreation
             cacheRead += turnRead
+            lastTurnContextTokens = turnCreation + turnRead
 
             // Ground truth for the TTL in effect on this turn, when Claude Code reports it.
             if let creation = usage["cache_creation"] as? [String: Any] {
@@ -257,11 +283,13 @@ final class TranscriptWatcher {
             effort: lastEffort,
             version: lastVersion,
             lastVisibleCharCount: lastVisibleCharCount,
+            currentContextTokens: lastTurnContextTokens > 0 ? lastTurnContextTokens : nil,
             activity: activity,
             compactionStartedAt: compactionStartedAt,
             detectedTTL: lastDetectedTTL,
             expiryEvents: expiryEvents,
             loadedToolResultChars: maxLoadedToolResultChars > 0 ? maxLoadedToolResultChars : nil,
+            loadedToolResultToolName: maxLoadedToolResultChars > 0 ? maxLoadedToolResultToolName : nil,
             cost: nil
         )
     }
@@ -281,7 +309,7 @@ final class TranscriptWatcher {
         activity: inout SessionActivity, compactionStartedAt: inout Date?, pendingCommandName: inout String?,
         cacheCreation: inout Int, cacheRead: inout Int,
         toolUsage: inout ToolUsage, lastVisibleCharCount: inout Int?,
-        maxLoadedToolResultChars: inout Int
+        maxLoadedToolResultChars: inout Int, maxLoadedToolResultToolName: inout String?
     ) {
         guard let type = obj["type"] as? String else { return }
 
@@ -298,6 +326,7 @@ final class TranscriptWatcher {
                 cacheRead = 0
                 // Compaction drops bulky tool output first, so any big dump is no longer loaded.
                 maxLoadedToolResultChars = 0
+                maxLoadedToolResultToolName = nil
             case "local_command":
                 activity = .idle
                 compactionStartedAt = nil
@@ -307,6 +336,7 @@ final class TranscriptWatcher {
                     toolUsage = ToolUsage()
                     lastVisibleCharCount = nil
                     maxLoadedToolResultChars = 0
+                    maxLoadedToolResultToolName = nil
                 }
                 pendingCommandName = nil
             default:

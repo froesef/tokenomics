@@ -92,6 +92,14 @@ struct Session: Identifiable, Equatable, Sendable {
     /// that field also counts invisible thinking tokens, which were never something the user had to read.
     let lastVisibleCharCount: Int?
 
+    /// Total context tokens sent on the most recent turn — for Claude Code this is that turn's
+    /// `cache_creation_input_tokens + cache_read_input_tokens` (the whole prefix resent that request);
+    /// for Codex it's `totalInputTokens` straight off the latest `token_count` event. Deliberately a
+    /// single-turn snapshot, not the session-lifetime `cacheCreationTokens`/`cacheReadTokens` sum below
+    /// (those accumulate every turn's cache traffic and are meant for the cost/savings meter, not "how
+    /// big is context right now"). Nil until at least one turn has usage data.
+    let currentContextTokens: Int?
+
     /// Whether this session is currently idle, mid-turn, or mid-compaction — see SessionActivity and
     /// TranscriptWatcher.parseActivity for how this is inferred (there's no explicit "in progress" event
     /// in the transcript).
@@ -116,12 +124,66 @@ struct Session: Identifiable, Equatable, Sendable {
     /// `Session.bigToolResultCharThreshold` for what counts as "big".
     var loadedToolResultChars: Int? = nil
 
+    /// Name of the tool whose result is the `loadedToolResultChars` dump (e.g. "Bash", "Read"), matched
+    /// via the transcript's `tool_use_id`. Nil if unknown (e.g. Codex, which doesn't track this yet) or if
+    /// no big dump is loaded.
+    var loadedToolResultToolName: String? = nil
+
     /// A tool result at or above this many characters (~10k tokens at ~4 chars/token) is treated as a
     /// "big dump" worth nudging the user to `/compact`. A named constant so it's easy to tune.
     static let bigToolResultCharThreshold = 40_000
 
-    /// Whether a big, un-compacted tool result is currently sitting in this session's context.
+    /// Whether a big, un-compacted tool result is currently sitting in this session's context. Detail-panel
+    /// signal only — the row badge uses `hasBigContext` instead (see below), since a session can be over
+    /// budget purely from many small turns accumulating with no single dump responsible.
     var hasBigToolDumpLoaded: Bool { (loadedToolResultChars ?? 0) >= Session.bigToolResultCharThreshold }
+
+    /// Standard context window size in tokens. Transcripts never record which window a session is
+    /// actually running with (e.g. whether 1M-context is active — see `extendedContextWindowTokens`),
+    /// so this is the assumption used unless `currentContextTokens` itself proves it wrong.
+    static let standardContextWindowTokens = 200_000
+
+    /// The 1M-context tier. If a session's actual token count exceeds `standardContextWindowTokens`, the
+    /// call could only have succeeded with this larger window active, so it's inferred rather than assumed.
+    static let extendedContextWindowTokens = 1_000_000
+
+    /// Absolute token count, not a fraction, at which the standard 200K window earns the "big context"
+    /// badge — 75% of it, the point where reloading the whole prefix is already a meaningfully expensive
+    /// turn.
+    static let standardContextWarnTokens = 150_000
+
+    /// Warn threshold for the 1M tier. Deliberately not the same 75% ratio as the standard tier (which
+    /// would be 750K): 600K of resent context is already expensive to reload every turn regardless of
+    /// how much headroom is left in a 1M window, so this is a flat, lower absolute threshold instead.
+    static let extendedContextWarnTokens = 600_000
+
+    /// The context window this session is actually running with — inferred, not assumed, whenever
+    /// `currentContextTokens` alone proves the standard 200K window couldn't have fit it.
+    var effectiveContextWindowTokens: Int {
+        (currentContextTokens ?? 0) > Session.standardContextWindowTokens
+            ? Session.extendedContextWindowTokens
+            : Session.standardContextWindowTokens
+    }
+
+    /// How full the effective context window is right now, or nil if no usage data is available yet.
+    /// Display-only (the tooltip's "X% of window" figure) — `hasBigContext` below uses an absolute
+    /// per-tier threshold, not this ratio, to decide when to warn.
+    var contextWindowUsageRatio: Double? {
+        currentContextTokens.map { Double($0) / Double(effectiveContextWindowTokens) }
+    }
+
+    /// The token count, for this session's effective window, at or above which the row shows the "big
+    /// context" badge.
+    var bigContextWarnTokens: Int {
+        effectiveContextWindowTokens == Session.extendedContextWindowTokens
+            ? Session.extendedContextWarnTokens
+            : Session.standardContextWarnTokens
+    }
+
+    /// Whether total context — regardless of what put it there — is large enough to warrant the row
+    /// badge. Unlike `hasBigToolDumpLoaded`, this fires just as readily for many small turns as for one
+    /// big dump, since either way it's the same per-turn cost multiplier.
+    var hasBigContext: Bool { (currentContextTokens ?? 0) >= bigContextWarnTokens }
 
     var cost: Double?
 

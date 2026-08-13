@@ -158,7 +158,7 @@ struct SessionDetailPanelView: View {
                 Text("Large output in context")
                     .font(.system(size: 11, weight: .semibold))
             }
-            Text("~\(SessionListViewModel.compactTokens((session.loadedToolResultChars ?? 0) / 4)) tokens of tool output are loaded and re-sent every turn. /compact drops it to keep later turns cheaper.")
+            Text("~\(SessionListViewModel.compactTokens((session.loadedToolResultChars ?? 0) / 4)) tokens from \(session.loadedToolResultToolName ?? "a tool call") are loaded and re-sent every turn. /compact drops it to keep later turns cheaper.")
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
