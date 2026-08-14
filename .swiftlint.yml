@@ -1,3 +1,18 @@
 excluded:
   - .build
   - docs
+
+identifier_name:
+  severity: warning
+
+cyclomatic_complexity:
+  severity: warning
+
+function_body_length:
+  severity: warning
+
+function_parameter_count:
+  severity: warning
+
+line_length:
+  severity: warning
