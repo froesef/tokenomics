@@ -118,6 +118,17 @@ it from Terminal to see it directly:
 .build/Tokenomics.app/Contents/MacOS/Tokenomics
 ```
 
+## Known bugs
+
+- **Ghostty tab/split/session matching is still unreliable.** Clicking a row, Ping, `/handoff`, and
+  `/compact` can focus or paste into the wrong split, wrong tab, or wrong terminal app, even after several
+  rounds of heuristic fixes (per-session id caching, `aiTitle` title-hint matching, a non-path-looking-title
+  tiebreak for idle-shell twins, and a cross-app plausibility check in `CompositeTerminalController`). Root
+  cause: Ghostty's AppleScript dictionary exposes no process id for a terminal surface, so there is no fully
+  reliable signal to bind a session to its exact pane when working-directory/title information is
+  ambiguous or not yet generated. See `Sources/Tokenomics/Services/GhosttyController.swift`,
+  `ITermController.swift`, and `CompositeTerminalController.swift` for the current (partial) mitigations.
+
 ## Documentation
 
 - [`spec.md`](spec.md) — the original design spec.

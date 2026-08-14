@@ -32,7 +32,15 @@ enum ITermError: Error {
 final class ITermController: TerminalController {
     private var cachedAvailability = false
     private var cachedWorkingDirectories: Set<String> = []
+    /// Working directory -> every currently-open session's title at that exact directory — see
+    /// `GhosttyController.cachedTerminalTitles`. Backs `hasPlausibleExactOpenTab`.
+    private var cachedSessionTitles: [String: [String]] = [:]
     private var lastActiveAt: [String: Date] = [:]
+    /// `Session.id` -> the iTerm2-assigned session guid (`<property name="id" ... cocoa key="guid">` on the
+    /// `session` class) last matched to that session. Same reasoning as `GhosttyController.resolvedTerminalIds`
+    /// — once resolved, target the exact session by id instead of re-running the cwd/title search, which
+    /// can't tell two same-cwd sessions apart until `aiTitle` is set.
+    private var resolvedSessionIds: [String: String] = [:]
 
     let displayName = "iTerm2"
 
@@ -47,6 +55,14 @@ final class ITermController: TerminalController {
         cachedWorkingDirectories.contains(workingDirectory)
     }
 
+    func hasPlausibleExactOpenTab(workingDirectory: String, aiTitle: String?) -> Bool {
+        guard let titles = cachedSessionTitles[workingDirectory], !titles.isEmpty else { return false }
+        if let aiTitle, !aiTitle.isEmpty {
+            return titles.contains { $0.contains(aiTitle) }
+        }
+        return titles.contains { !($0.hasPrefix("/") || $0.hasPrefix("~") || $0.hasPrefix("…")) }
+    }
+
     func timeSinceLastActive(workingDirectory: String) -> TimeInterval? {
         guard let date = lastActiveAt[workingDirectory] else { return nil }
         return Date().timeIntervalSince(date)
@@ -56,15 +72,20 @@ final class ITermController: TerminalController {
         guard Self.isITermRunning() else {
             cachedAvailability = false
             cachedWorkingDirectories = []
+            cachedSessionTitles = [:]
             return
         }
         let authorized = await Self.probeAutomationAuthorized()
         cachedAvailability = authorized
         guard authorized else {
             cachedWorkingDirectories = []
+            cachedSessionTitles = [:]
             return
         }
-        cachedWorkingDirectories = Set(await Self.fetchSessionWorkingDirectories())
+        let entries = await Self.fetchSessionEntries()
+        cachedWorkingDirectories = Set(entries.map(\.workingDirectory))
+        cachedSessionTitles = Dictionary(grouping: entries, by: \.workingDirectory)
+            .mapValues { $0.map(\.title) }
 
         if Self.isITermFrontmost(), let focused = await Self.fetchFocusedSessionWorkingDirectory() {
             lastActiveAt[focused] = Date()
@@ -80,7 +101,7 @@ final class ITermController: TerminalController {
     }
 
     /// The one session the user is actually looking at right now, if any — iTerm2's frontmost window's
-    /// current tab's current session. Distinct from `fetchSessionWorkingDirectories`, which lists every
+    /// current tab's current session. Distinct from `fetchSessionEntries`, which lists every
     /// open session regardless of focus.
     private static func fetchFocusedSessionWorkingDirectory() async -> String? {
         await Task.detached(priority: .utility) {
@@ -108,29 +129,34 @@ final class ITermController: TerminalController {
         }.value
     }
 
-    /// Lists every open session's working directory in one round trip, so per-session matching
-    /// (`hasOpenTab`) is a local Set lookup instead of one AppleScript call per session.
-    private static func fetchSessionWorkingDirectories() async -> [String] {
+    /// Lists every open session's working directory and title in one round trip, so per-session matching
+    /// (`hasOpenTab`, `hasPlausibleExactOpenTab`) is a local lookup instead of one AppleScript call per
+    /// session — see `GhosttyController.fetchTerminalEntries` for why the two are joined with U+001F.
+    private static func fetchSessionEntries() async -> [(workingDirectory: String, title: String)] {
         await Task.detached(priority: .utility) {
             let script = """
             tell application "iTerm2"
-                set dirs to {}
+                set entries to {}
                 repeat with w in windows
                     repeat with t in tabs of w
                         repeat with s in sessions of t
                             try
-                                set end of dirs to ((variable named "session.path") of s)
+                                set end of entries to (((variable named "session.path") of s) & (ASCII character 31) & (name of s as text))
                             end try
                         end repeat
                     end repeat
                 end repeat
-                return dirs
+                return entries
             end tell
             """
             var errorDict: NSDictionary?
             guard let descriptor = NSAppleScript(source: script)?.executeAndReturnError(&errorDict),
                   errorDict == nil else { return [] }
-            return Self.stringList(from: descriptor)
+            return Self.stringList(from: descriptor).compactMap { line in
+                let parts = line.split(separator: "\u{1F}", maxSplits: 1, omittingEmptySubsequences: false)
+                guard parts.count == 2 else { return nil }
+                return (workingDirectory: String(parts[0]), title: String(parts[1]))
+            }
         }.value
     }
 
@@ -153,10 +179,11 @@ final class ITermController: TerminalController {
     }
 
     /// The shared "find the matching session" fragment — same matching strategy as
-    /// `GhosttyController.findTerminalScript` (exact directory match preferred, title-hint tiebreak among
-    /// exact matches, prefix fallback), adapted to iTerm2's `session.path` variable and `name of session`.
-    /// Leaves the result in `targetSession` (missing value if none found). Assumes it's inlined inside a
-    /// `tell application "iTerm2" ... end tell` block.
+    /// `GhosttyController.findTerminalScript` (exact directory match preferred, then a title-hint
+    /// tiebreak, then a non-path-looking-title tiebreak, then prefix fallback — see that function's doc
+    /// comment for why the non-path-title check exists), adapted to iTerm2's `session.path` variable and
+    /// `name of session`. Leaves the result in `targetSession` (missing value if none found). Assumes it's
+    /// inlined inside a `tell application "iTerm2" ... end tell` block.
     private nonisolated static func findSessionScript(escapedWorkingDirectory dir: String, escapedTitleHint hint: String) -> String {
         """
         set targetDir to "\(dir)"
@@ -165,6 +192,7 @@ final class ITermController: TerminalController {
         end if
         set titleHint to "\(hint)"
         set targetSession to missing value
+        set nonPathSession to missing value
         set fallbackSession to missing value
         repeat with w in windows
             repeat with t in tabs of w
@@ -175,19 +203,31 @@ final class ITermController: TerminalController {
                             set sessDir to text 1 thru -2 of sessDir
                         end if
                         if sessDir is targetDir then
-                            if fallbackSession is missing value then set fallbackSession to s
-                            if titleHint is not "" and targetSession is missing value then
-                                try
-                                    if (name of s as text) contains titleHint then set targetSession to s
-                                end try
-                            end if
+                            set fallbackSession to s
+                            try
+                                set sessTitle to (name of s as text)
+                                if titleHint is not "" and targetSession is missing value and sessTitle contains titleHint then
+                                    set targetSession to s
+                                end if
+                                if not (sessTitle starts with "/" or sessTitle starts with "~" or sessTitle starts with "…") then
+                                    set nonPathSession to s
+                                end if
+                            end try
                         end if
                     end try
                 end repeat
             end repeat
         end repeat
+        if targetSession is missing value then set targetSession to nonPathSession
         if targetSession is missing value then set targetSession to fallbackSession
         if targetSession is missing value then
+            -- No exact-cwd match at all — search ancestor/descendant matches instead, same tie-break
+            -- priority as the exact-match pass above (title hint, then non-path-looking title), scanning
+            -- every candidate rather than stopping at the first one found — see
+            -- `GhosttyController.findTerminalScript`'s matching prefix-fallback comment.
+            set prefixTitleMatch to missing value
+            set prefixNonPath to missing value
+            set prefixFirst to missing value
             repeat with w in windows
                 repeat with t in tabs of w
                     repeat with s in sessions of t
@@ -197,52 +237,102 @@ final class ITermController: TerminalController {
                                 set sessDir to text 1 thru -2 of sessDir
                             end if
                             if sessDir starts with (targetDir & "/") or targetDir starts with (sessDir & "/") then
-                                set targetSession to s
-                                exit repeat
+                                if prefixFirst is missing value then set prefixFirst to s
+                                try
+                                    set sessTitle to (name of s as text)
+                                    if titleHint is not "" and prefixTitleMatch is missing value and sessTitle contains titleHint then
+                                        set prefixTitleMatch to s
+                                    end if
+                                    if prefixNonPath is missing value and not (sessTitle starts with "/" or sessTitle starts with "~" or sessTitle starts with "…") then
+                                        set prefixNonPath to s
+                                    end if
+                                end try
                             end if
                         end try
                     end repeat
-                    if targetSession is not missing value then exit repeat
                 end repeat
-                if targetSession is not missing value then exit repeat
             end repeat
+            if prefixTitleMatch is not missing value then
+                set targetSession to prefixTitleMatch
+            else if prefixNonPath is not missing value then
+                set targetSession to prefixNonPath
+            else
+                set targetSession to prefixFirst
+            end if
         end if
         """
     }
 
-    /// Runs a script built around `findSessionScript`, returning the AppleScript error description (if
-    /// any). `bodyIfFound` is the AppleScript run when a match exists (e.g. `tell targetSession to select`),
+    /// Runs a script that first tries `cachedSessionId` (if any) via `session id "..."` — a direct,
+    /// unambiguous lookup by iTerm2's own stable guid — and only falls back to `findSessionScript`'s cwd/
+    /// title search when there's no cached id or the cached one no longer resolves (session closed).
+    /// `bodyIfFound` is the AppleScript run when a match exists (e.g. `tell targetSession to select`),
     /// inserted inside the `tell` block. When `activate` is true (the default), `activate application
     /// "iTerm2"` runs afterward so the window is actually visible once found — callers that need to stay
     /// quiet in the background (the unattended keep-alive ping) pass `activate: false`.
-    private static func runMatchAndAct(workingDirectory: String, aiTitle: String?, bodyIfFound: String, activate: Bool = true) async -> String? {
+    ///
+    /// Returns the resolved session's own id alongside any AppleScript error, so callers can update
+    /// `resolvedSessionIds`.
+    private static func runMatchAndAct(cachedSessionId: String?, workingDirectory: String, aiTitle: String?, bodyIfFound: String, activate: Bool = true) async -> (resolvedId: String?, error: String?) {
         let dir = Self.escape(workingDirectory)
         let hint = Self.escape(aiTitle ?? "")
+        let cachedId = Self.escape(cachedSessionId ?? "")
         let activateLine = activate ? "if targetSession is not missing value then activate application \"iTerm2\"" : ""
         let script = """
         tell application "iTerm2"
-            \(Self.findSessionScript(escapedWorkingDirectory: dir, escapedTitleHint: hint))
+            set targetSession to missing value
+            if "\(cachedId)" is not "" then
+                try
+                    set targetSession to session id "\(cachedId)"
+                end try
+            end if
+            if targetSession is missing value then
+                \(Self.findSessionScript(escapedWorkingDirectory: dir, escapedTitleHint: hint))
+            end if
             if targetSession is not missing value then
                 \(bodyIfFound)
             end if
         end tell
+        set resultId to ""
+        if targetSession is not missing value then
+            tell application "iTerm2"
+                try
+                    set resultId to (id of targetSession) as text
+                end try
+            end tell
+        end if
         \(activateLine)
+        resultId
         """
         return await Task.detached(priority: .utility) {
             var errorDict: NSDictionary?
-            NSAppleScript(source: script)?.executeAndReturnError(&errorDict)
-            return errorDict?.description
+            let descriptor = NSAppleScript(source: script)?.executeAndReturnError(&errorDict)
+            guard errorDict == nil else { return (nil, errorDict?.description) }
+            let resolvedId = descriptor?.stringValue
+            return (resolvedId?.isEmpty == false ? resolvedId : nil, nil)
         }.value
     }
 
-    func focusTab(workingDirectory: String, aiTitle: String?) async throws {
+    /// Updates (or clears) `resolvedSessionIds[sessionId]` after a match attempt — see
+    /// `GhosttyController.rememberResolvedId`.
+    private func rememberResolvedId(_ resolvedId: String?, for sessionId: String) {
+        if let resolvedId {
+            resolvedSessionIds[sessionId] = resolvedId
+        } else {
+            resolvedSessionIds.removeValue(forKey: sessionId)
+        }
+    }
+
+    func focusTab(sessionId: String, workingDirectory: String, aiTitle: String?) async throws {
         guard isAvailable else { throw ITermError.unavailable }
-        if let error = await Self.runMatchAndAct(workingDirectory: workingDirectory, aiTitle: aiTitle, bodyIfFound: "tell targetSession to select") {
+        let (resolvedId, error) = await Self.runMatchAndAct(cachedSessionId: resolvedSessionIds[sessionId], workingDirectory: workingDirectory, aiTitle: aiTitle, bodyIfFound: "tell targetSession to select")
+        rememberResolvedId(resolvedId, for: sessionId)
+        if let error {
             throw ITermError.scriptFailed(error)
         }
     }
 
-    func pasteText(_ text: String, workingDirectory: String, aiTitle: String?, activate: Bool) async throws {
+    func pasteText(_ text: String, sessionId: String, workingDirectory: String, aiTitle: String?, activate: Bool) async throws {
         guard isAvailable else { throw ITermError.unavailable }
         let escapedText = Self.escape(text)
         // `select` only selects the session within iTerm2's own window(s); it doesn't bring the app
@@ -251,7 +341,9 @@ final class ITermController: TerminalController {
         tell targetSession to select
         tell targetSession to write text "\(escapedText)" newline no
         """
-        if let error = await Self.runMatchAndAct(workingDirectory: workingDirectory, aiTitle: aiTitle, bodyIfFound: body, activate: activate) {
+        let (resolvedId, error) = await Self.runMatchAndAct(cachedSessionId: resolvedSessionIds[sessionId], workingDirectory: workingDirectory, aiTitle: aiTitle, bodyIfFound: body, activate: activate)
+        rememberResolvedId(resolvedId, for: sessionId)
+        if let error {
             throw ITermError.scriptFailed(error)
         }
     }
@@ -261,11 +353,13 @@ final class ITermController: TerminalController {
     /// focus from whatever window/app the user is actually looking at. `write text` defaults to `newline
     /// yes`, which is iTerm2's own way of pressing Return after the text — no separate key-event command
     /// needed, unlike Ghostty's `send key "enter"`.
-    func pasteTextAndSubmit(_ text: String, workingDirectory: String, aiTitle: String?) async throws {
+    func pasteTextAndSubmit(_ text: String, sessionId: String, workingDirectory: String, aiTitle: String?) async throws {
         guard isAvailable else { throw ITermError.unavailable }
         let escapedText = Self.escape(text)
         let body = "tell targetSession to write text \"\(escapedText)\""
-        if let error = await Self.runMatchAndAct(workingDirectory: workingDirectory, aiTitle: aiTitle, bodyIfFound: body, activate: false) {
+        let (resolvedId, error) = await Self.runMatchAndAct(cachedSessionId: resolvedSessionIds[sessionId], workingDirectory: workingDirectory, aiTitle: aiTitle, bodyIfFound: body, activate: false)
+        rememberResolvedId(resolvedId, for: sessionId)
+        if let error {
             throw ITermError.scriptFailed(error)
         }
     }
