@@ -20,6 +20,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Cache SPM build
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: ${{ runner.os }}-spm-${{ hashFiles('Package.swift', 'Sources/**', 'Tests/**') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-
+
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
         with:
