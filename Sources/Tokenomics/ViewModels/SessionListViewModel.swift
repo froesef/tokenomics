@@ -422,6 +422,9 @@ final class SessionListViewModel: ObservableObject {
             hoverTask = Task { [weak self] in
                 try? await Task.sleep(for: .milliseconds(300))
                 guard !Task.isCancelled, let self, self.pointerOverRow else { return }
+                // A turn already in flight (Claude working or a /compact running) needs no user action and
+                // no keep-alive ping — nothing in the panel would be useful, so don't show it at all.
+                guard session.activity != .running, session.activity != .compacting else { return }
                 self.shownPanelSessionID = session.id
                 self.shownPanelCacheTouchTime = session.cacheTouchTime
                 self.detailPanel.show(
@@ -468,11 +471,15 @@ final class SessionListViewModel: ObservableObject {
 
     /// Closes the open detail panel if the session it belongs to just had its cache-touch anchor change —
     /// a fresh assistant turn landed (counter reset to full) or the cache went cold via /compact or /clear
-    /// — so the panel never sits open showing a snapshot that no longer matches. Called once per rescan.
+    /// — or just started a turn (`.running`/`.compacting`), so the panel never sits open showing a stale
+    /// snapshot, or offering actions with nothing useful to do, while a reply is already in flight. Called
+    /// once per rescan.
     private func closeDetailPanelIfSessionReset() {
         guard let id = shownPanelSessionID else { return }
         guard let session = sessions.first(where: { $0.id == id }) else { return }
-        guard session.cacheTouchTime != shownPanelCacheTouchTime else { return }
+        let staleSnapshot = session.cacheTouchTime != shownPanelCacheTouchTime
+        let nowInFlight = session.activity == .running || session.activity == .compacting
+        guard staleSnapshot || nowInFlight else { return }
         hoverTask?.cancel()
         pointerOverRow = false
         pointerOverPanel = false
