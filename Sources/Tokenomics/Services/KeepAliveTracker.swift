@@ -148,6 +148,11 @@ final class KeepAliveTracker {
 
     func shouldFire(session: Session, now: Date, settings: SettingsStore) -> Bool {
         guard let state = states[session.id], state.enabled, !state.awaitingOwnPingResponse else { return false }
+        // A turn the user (or Claude) already started is still in flight — its own answer will touch the
+        // cache once it lands, so pasting a ping on top would just queue uselessly behind it. `.running`
+        // and `.compacting` both mean a reply is already pending; `.waitingForInput` is excluded since
+        // that's Claude blocked on the human, not an answer in flight.
+        guard session.activity == .idle || session.activity == .waitingForInput else { return false }
         let ttl = session.effectiveTTL(fallback: settings.ttl)
         let remaining = session.remaining(now: now, ttl: ttl)
         guard remaining > 0, remaining <= settings.keepAliveLeadSeconds else { return false }

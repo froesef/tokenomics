@@ -37,6 +37,12 @@ final class SessionListViewModel: ObservableObject {
     private var hoverTask: Task<Void, Never>?
     private var pointerOverRow = false
     private var pointerOverPanel = false
+    /// Which session's detail panel is currently open, and what its cache-touch anchor looked like at the
+    /// moment it opened — so a rescan can tell the shown snapshot went stale (a new turn landed, or the
+    /// cache went cold via /compact or /clear) and close it rather than leave a popup reading numbers that
+    /// no longer match the session underneath it.
+    private var shownPanelSessionID: String?
+    private var shownPanelCacheTouchTime: Date?
     private var cancellables = Set<AnyCancellable>()
 
     /// Held for the app's entire lifetime, never ended: this is an `LSUIElement` accessory app with no
@@ -195,6 +201,7 @@ final class SessionListViewModel: ObservableObject {
             keepAlive.observeTurn(session: session, now: currentNow)
         }
         enableKeepAliveForActiveSessions(now: currentNow)
+        closeDetailPanelIfSessionReset()
         // Prune against the raw scan, not the process-filtered `sessions` list below: that filter relies
         // on flaky `pgrep`/`lsof` process detection (see the comment above), and a single missed scan
         // would otherwise wipe a session's keep-alive toggle for no reason the user did anything about.
@@ -415,6 +422,11 @@ final class SessionListViewModel: ObservableObject {
             hoverTask = Task { [weak self] in
                 try? await Task.sleep(for: .milliseconds(300))
                 guard !Task.isCancelled, let self, self.pointerOverRow else { return }
+                // A turn already in flight (Claude working or a /compact running) needs no user action and
+                // no keep-alive ping — nothing in the panel would be useful, so don't show it at all.
+                guard session.activity != .running, session.activity != .compacting else { return }
+                self.shownPanelSessionID = session.id
+                self.shownPanelCacheTouchTime = session.cacheTouchTime
                 self.detailPanel.show(
                     session: session, settings: self.settings, hasOpenTab: hasOpenTab,
                     timeSinceLastActive: self.ghostty.timeSinceLastActive(workingDirectory: session.workingDirectory),
@@ -452,7 +464,28 @@ final class SessionListViewModel: ObservableObject {
             guard !Task.isCancelled, let self else { return }
             guard !self.pointerOverRow, !self.pointerOverPanel else { return }
             self.detailPanel.hide()
+            self.shownPanelSessionID = nil
+            self.shownPanelCacheTouchTime = nil
         }
+    }
+
+    /// Closes the open detail panel if the session it belongs to just had its cache-touch anchor change —
+    /// a fresh assistant turn landed (counter reset to full) or the cache went cold via /compact or /clear
+    /// — or just started a turn (`.running`/`.compacting`), so the panel never sits open showing a stale
+    /// snapshot, or offering actions with nothing useful to do, while a reply is already in flight. Called
+    /// once per rescan.
+    private func closeDetailPanelIfSessionReset() {
+        guard let id = shownPanelSessionID else { return }
+        guard let session = sessions.first(where: { $0.id == id }) else { return }
+        let staleSnapshot = session.cacheTouchTime != shownPanelCacheTouchTime
+        let nowInFlight = session.activity == .running || session.activity == .compacting
+        guard staleSnapshot || nowInFlight else { return }
+        hoverTask?.cancel()
+        pointerOverRow = false
+        pointerOverPanel = false
+        detailPanel.hide()
+        shownPanelSessionID = nil
+        shownPanelCacheTouchTime = nil
     }
 
     // MARK: - Menu bar presentation
