@@ -1,51 +1,6 @@
 import AppKit
 import Foundation
 
-/// Swappable terminal-focus backend so the rest of the app stays terminal-agnostic (spec.md §8). Adding
-/// iTerm2 later means a new file conforming to this protocol, not a refactor of the app.
-@MainActor
-protocol TerminalController: AnyObject {
-    /// App-level availability: Ghostty is running and Automation is authorized. Must be a cheap,
-    /// non-blocking read — see `refreshAvailability()` for why.
-    var isAvailable: Bool { get }
-    /// Whether a terminal is currently open at (or under) this working directory. Also must be cheap and
-    /// non-blocking — it's read from view bodies to decide whether a row's focus affordance is live. This
-    /// is the per-session cross-reference: `isAvailable` alone only says "Ghostty is reachable at all".
-    func hasOpenTab(workingDirectory: String) -> Bool
-    /// Best-effort: seconds since this app last observed Ghostty's frontmost window/tab focused on this
-    /// directory, sampled once per `refreshAvailability()` call — resolution is the refresh interval, not
-    /// exact. Nil if never observed (e.g. just launched, or this directory's tab has never been frontmost
-    /// while this app was running).
-    func timeSinceLastActive(workingDirectory: String) -> TimeInterval?
-    /// `aiTitle`, when non-nil, disambiguates between several terminals that all report the same working
-    /// directory (e.g. one pane running the Claude Code session, a plain idle shell twin sitting at the
-    /// same path in another split) — see the deviation note on `findTerminalScript`. Pass
-    /// `Session.aiTitle` here whenever it's available; a caller with no session context can omit it.
-    func focusTab(workingDirectory: String, aiTitle: String?) async throws
-    /// Pastes text into the matching terminal — via Ghostty's native `input text ... to terminal`
-    /// command, which its own dictionary describes as "as if it was pasted": it does **not** press
-    /// Return. The text lands in the terminal's input line for the user to review and run themselves.
-    /// Never used for anything that executes on its own — see spec.md §11 ("read-and-focus only") and
-    /// the deviation note on `GhosttyController` for why this stays a manual last step. `activate`
-    /// controls whether the Ghostty window is brought forward afterward: true for /handoff, /compact, and
-    /// other explicit paste actions the user expects to see land; false for the manual Ping button, which
-    /// pastes its keep-alive question quietly without stealing focus from whatever window the user is on.
-    func pasteText(_ text: String, workingDirectory: String, aiTitle: String?, activate: Bool) async throws
-    /// Pastes text into the matching terminal, then submits it with a Return key event — unlike
-    /// `pasteText`, this one *does* execute whatever was pasted, with no user step in between. This is a
-    /// deliberate, narrow exception to the "read-and-focus only" rule above: used exclusively by the
-    /// automatic keep-alive feature (see `KeepAliveTracker`) for its one fixed, harmless prompt, for when
-    /// the user is genuinely away (a meeting, lunch) and there's no one to press Enter before the cache
-    /// goes cold. No other caller in this app should use this. Unlike every other action here, this one
-    /// never focuses the tab or activates Ghostty — being unattended is exactly why it must stay quiet and
-    /// not steal focus from whatever the user is doing right now.
-    func pasteTextAndSubmit(_ text: String, workingDirectory: String, aiTitle: String?) async throws
-    /// Re-probes availability and re-fetches the set of open working directories. Availability and open
-    /// tabs both change while the app runs, so callers should call this periodically (the ViewModel does,
-    /// on its regular refresh) rather than caching either forever.
-    func refreshAvailability() async
-}
-
 enum GhosttyError: Error {
     case unavailable
     case scriptFailed(String)
@@ -82,11 +37,17 @@ final class GhosttyController: TerminalController {
     private var cachedWorkingDirectories: Set<String> = []
     private var lastActiveAt: [String: Date] = [:]
 
+    let displayName = "Ghostty"
+
     var isAvailable: Bool { cachedAvailability }
 
     func hasOpenTab(workingDirectory: String) -> Bool {
         cachedWorkingDirectories.contains(workingDirectory)
             || cachedWorkingDirectories.contains { $0.hasPrefix(workingDirectory) || workingDirectory.hasPrefix($0) }
+    }
+
+    func hasExactOpenTab(workingDirectory: String) -> Bool {
+        cachedWorkingDirectories.contains(workingDirectory)
     }
 
     func timeSinceLastActive(workingDirectory: String) -> TimeInterval? {

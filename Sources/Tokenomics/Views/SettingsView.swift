@@ -73,10 +73,10 @@ struct SettingsView: View {
                     }
                 }
 
-                Toggle(isOn: $settings.ghosttyFocusEnabled) {
+                Toggle(isOn: $settings.terminalFocusEnabled) {
                     SettingLabel(
-                        title: "Enable Ghostty focus action",
-                        description: "Let notifications focus the originating session's Ghostty window."
+                        title: "Enable terminal focus action",
+                        description: "Let notifications focus the originating session's terminal window (Ghostty or iTerm2)."
                     )
                 }
             }

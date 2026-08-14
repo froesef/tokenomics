@@ -45,13 +45,13 @@ timestamp.
   countdown, but a tool call regularly outlasts a session's TTL (5 minutes by default); once every session
   is cold there's no countdown left to show, so the bar falls back to whichever session is running,
   compacting, or waiting on you, rather than showing a bare, easy-to-miss timer icon.
-- **Click a row to focus the matching Ghostty tab** — only offered when a real matching tab exists.
+- **Click a row to focus the matching terminal tab (Ghostty or iTerm2)** — only offered when a real matching tab exists.
 - **Right-click (or the hover panel) for `/handoff`, `/compact`, and a no-op "Ping"** — these paste into
   Claude Code's terminal as if typed, never run automatically.
 - **Warnings before a session goes cold**: a top-of-screen banner plus a system notification, with
   quick-action buttons, timed to scale with how much there is to read and how long you've been away.
 - **Settings window** (menu-bar mode, refresh interval, expiring-soon threshold, notification lead time,
-  Ghostty toggle, keep-alive caps), separate from the dropdown.
+  terminal focus toggle, keep-alive caps), separate from the dropdown.
 
 ## Build & run
 
@@ -100,9 +100,10 @@ use instead.
 
 ## Permissions
 
-- **Automation (Ghostty control):** the first time the app tries to focus a tab, macOS prompts for
-  Automation permission. If denied or not yet granted, the focus button/row-tap is simply disabled —
-  grant it later via System Settings → Privacy & Security → Automation → Tokenomics → Ghostty.
+- **Automation (terminal control):** the first time the app tries to focus a tab, macOS prompts for
+  Automation permission for whichever terminal you use (Ghostty, iTerm2). If denied or not yet granted,
+  the focus button/row-tap is simply disabled — grant it later via System Settings → Privacy & Security →
+  Automation → Tokenomics → Ghostty/iTerm2.
 - **Notifications:** requested once on launch (only inside a real `.app` bundle — see above). Denial
   degrades gracefully; no in-app countdown functionality depends on it.
 - No other permissions are used. The app never writes to `~/.claude` or `~/.codex`.

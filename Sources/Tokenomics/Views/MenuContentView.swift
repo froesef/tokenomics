@@ -34,9 +34,9 @@ struct MenuContentView: View {
                             session: session,
                             now: viewModel.now,
                             settings: viewModel.settings,
-                            hasOpenTab: viewModel.settings.ghosttyFocusEnabled
-                                && viewModel.ghostty.isAvailable
-                                && viewModel.ghostty.hasOpenTab(workingDirectory: session.workingDirectory),
+                            hasOpenTab: viewModel.settings.terminalFocusEnabled
+                                && viewModel.terminal.isAvailable
+                                && viewModel.terminal.hasOpenTab(workingDirectory: session.workingDirectory),
                             keepAliveInfo: viewModel.keepAliveInfo(for: session),
                             onFocus: { Task { await viewModel.focus(session) } },
                             onPasteCommand: { text in Task { await viewModel.pasteCommand(text, into: session) } },
@@ -49,9 +49,9 @@ struct MenuContentView: View {
                             onHoverChanged: { hovering in
                                 viewModel.rowHoverChanged(
                                     session, isHovering: hovering,
-                                    hasOpenTab: viewModel.settings.ghosttyFocusEnabled
-                                        && viewModel.ghostty.isAvailable
-                                        && viewModel.ghostty.hasOpenTab(workingDirectory: session.workingDirectory)
+                                    hasOpenTab: viewModel.settings.terminalFocusEnabled
+                                        && viewModel.terminal.isAvailable
+                                        && viewModel.terminal.hasOpenTab(workingDirectory: session.workingDirectory)
                                 )
                             }
                         )

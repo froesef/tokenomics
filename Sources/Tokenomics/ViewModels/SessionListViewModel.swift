@@ -16,7 +16,7 @@ final class SessionListViewModel: ObservableObject {
     @Published private(set) var meter = SavingsMeter()
 
     let settings: SettingsStore
-    let ghostty: TerminalController
+    let terminal: TerminalController
 
     private let watcher: TranscriptWatcher
     private let codexWatcher: CodexSessionWatcher
@@ -58,9 +58,9 @@ final class SessionListViewModel: ObservableObject {
         reason: "Keep per-second cache countdowns and automatic keep-alive pings on schedule while backgrounded"
     )
 
-    init(settings: SettingsStore = .shared, ghostty: TerminalController = GhosttyController()) {
+    init(settings: SettingsStore = .shared, terminal: TerminalController = CompositeTerminalController()) {
         self.settings = settings
-        self.ghostty = ghostty
+        self.terminal = terminal
         self.watcher = TranscriptWatcher()
         self.codexWatcher = CodexSessionWatcher()
 
@@ -136,7 +136,7 @@ final class SessionListViewModel: ObservableObject {
             withCost[i].cost = await usage.cost(forSessionID: withCost[i].id)
         }
 
-        await ghostty.refreshAvailability()
+        await terminal.refreshAvailability()
         await processMatcher.refresh()
         await rtk.refresh(workingDirectories: withCost.filter { $0.agentKind == .claudeCode }.map(\.workingDirectory))
         for i in withCost.indices {
@@ -211,8 +211,8 @@ final class SessionListViewModel: ObservableObject {
         if await usage.isAvailable == false {
             warnings.append(await usage.unavailableReason ?? "ccusage unavailable")
         }
-        if settings.ghosttyFocusEnabled && !ghostty.isAvailable {
-            warnings.append("Ghostty automation not authorized — focus action disabled")
+        if settings.terminalFocusEnabled && !terminal.isAvailable {
+            warnings.append("No supported terminal (Ghostty, iTerm2) running or automation not authorized — focus action disabled")
         }
         if sessions.contains(where: { $0.agentKind == .claudeCode }), await rtk.isAvailable == false {
             warnings.append("No token-savings CLI (e.g. rtk) found — consider installing one to track Bash token savings")
@@ -243,7 +243,7 @@ final class SessionListViewModel: ObservableObject {
         let base = settings.notifyLeadTimeSeconds
         // ~15 chars/sec is a conservative skim-reading pace (well above the ~180-250wpm typical range).
         let readingSeconds = min(240, Double(session.lastVisibleCharCount ?? 0) / 15)
-        let idleSeconds = ghostty.timeSinceLastActive(workingDirectory: session.workingDirectory) ?? 0
+        let idleSeconds = terminal.timeSinceLastActive(workingDirectory: session.workingDirectory) ?? 0
         let idleBuffer = min(120, idleSeconds / 10)
         return base + readingSeconds + idleBuffer
     }
@@ -272,14 +272,14 @@ final class SessionListViewModel: ObservableObject {
 
     func focus(_ session: Session) async {
         guard session.agentKind == .claudeCode else { return }
-        guard settings.ghosttyFocusEnabled, ghostty.isAvailable else { return }
+        guard settings.terminalFocusEnabled, terminal.isAvailable else { return }
         // Close the dropdown right away rather than waiting on the AppleScript round-trip below: the
         // point is to jump straight into the terminal, so the menu shouldn't still be sitting on screen
-        // once Ghostty comes forward. `orderOut` (not `close()`) since this is the same NSWindow instance
+        // once the terminal comes forward. `orderOut` (not `close()`) since this is the same NSWindow instance
         // MenuBarExtra's `.window` style reuses every time the dropdown reopens — closing it outright risks
         // it being released.
         hostWindow?.orderOut(nil)
-        try? await ghostty.focusTab(workingDirectory: session.workingDirectory, aiTitle: session.aiTitle)
+        try? await terminal.focusTab(workingDirectory: session.workingDirectory, aiTitle: session.aiTitle)
     }
 
     func openInCodex(_ session: Session) {
@@ -287,14 +287,14 @@ final class SessionListViewModel: ObservableObject {
         NSWorkspace.shared.open(url)
     }
 
-    /// Pastes (never executes — see GhosttyController) a command like `/handoff` or `/compact` into the
+    /// Pastes (never executes — see TerminalController) a command like `/handoff` or `/compact` into the
     /// session's terminal and focuses it, so the user reviews and runs it themselves. `activate` defaults
     /// to true for these explicit paste actions; `ping` below calls through with `activate: false` since
     /// it's meant to stay quiet.
     func pasteCommand(_ text: String, into session: Session, activate: Bool = true) async {
         guard session.agentKind == .claudeCode else { return }
-        guard settings.ghosttyFocusEnabled, ghostty.isAvailable else { return }
-        try? await ghostty.pasteText(text, workingDirectory: session.workingDirectory, aiTitle: session.aiTitle, activate: activate)
+        guard settings.terminalFocusEnabled, terminal.isAvailable else { return }
+        try? await terminal.pasteText(text, workingDirectory: session.workingDirectory, aiTitle: session.aiTitle, activate: activate)
     }
 
     /// "Ping" is a nop keep-alive: unlike /handoff (asks for a real summary) or /compact (does real work),
@@ -304,7 +304,7 @@ final class SessionListViewModel: ObservableObject {
 
     /// Unlike /handoff and /compact (explicit, deliberate actions the user expects to watch land), Ping is
     /// meant to be a quick "still there?" nudge fired from wherever the user currently is — it should never
-    /// yank Ghostty to the front of their screen.
+    /// yank the terminal to the front of their screen.
     func ping(_ session: Session) async {
         await pasteCommand(Self.pingPrompt, into: session, activate: false)
     }
@@ -343,13 +343,13 @@ final class SessionListViewModel: ObservableObject {
 
     /// Per-second check (see `tick`): fires an unattended keep-alive ping for any enabled session that's
     /// about to go cold, still has budget, and has an open tab to paste into. Gated on the same
-    /// automation toggle/availability as every other Ghostty action — if the user turned that off, no
+    /// automation toggle/availability as every other terminal action — if the user turned that off, no
     /// automatic keystrokes should reach their terminal either.
     private func checkKeepAlive() {
-        guard settings.ghosttyFocusEnabled, ghostty.isAvailable else { return }
+        guard settings.terminalFocusEnabled, terminal.isAvailable else { return }
         for session in sessions {
             guard session.supportsCacheCountdown else { continue }
-            guard ghostty.hasOpenTab(workingDirectory: session.workingDirectory) else { continue }
+            guard terminal.hasOpenTab(workingDirectory: session.workingDirectory) else { continue }
             guard keepAlive.shouldFire(session: session, now: now, settings: settings) else { continue }
             let remaining = session.remaining(now: now, ttl: session.effectiveTTL(fallback: settings.ttl))
             fireKeepAlivePing(for: session, remaining: remaining)
@@ -390,7 +390,7 @@ final class SessionListViewModel: ObservableObject {
         Task { [weak self] in
             guard let self else { return }
             do {
-                try await self.ghostty.pasteTextAndSubmit(Self.autoKeepAlivePrompt, workingDirectory: session.workingDirectory, aiTitle: session.aiTitle)
+                try await self.terminal.pasteTextAndSubmit(Self.autoKeepAlivePrompt, workingDirectory: session.workingDirectory, aiTitle: session.aiTitle)
                 self.keepAlive.recordFireSucceeded(for: session.id)
                 FileHandle.standardError.write(
                     "[Tokenomics] keep-alive: succeeded for \(session.projectName)\n".data(using: .utf8)!
@@ -429,7 +429,8 @@ final class SessionListViewModel: ObservableObject {
                 self.shownPanelCacheTouchTime = session.cacheTouchTime
                 self.detailPanel.show(
                     session: session, settings: self.settings, hasOpenTab: hasOpenTab,
-                    timeSinceLastActive: self.ghostty.timeSinceLastActive(workingDirectory: session.workingDirectory),
+                    terminalName: self.terminal.terminalName(for: session.workingDirectory),
+                    timeSinceLastActive: self.terminal.timeSinceLastActive(workingDirectory: session.workingDirectory),
                     keepAliveInfo: self.keepAliveInfo(for: session),
                     anchorWindow: self.hostWindow,
                     onFocus: { Task { await self.focus(session) } },

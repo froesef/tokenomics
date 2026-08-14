@@ -28,8 +28,8 @@ final class SettingsStore: ObservableObject {
     @Published var notifyLeadTimeSeconds: Double {
         didSet { UserDefaults.standard.set(notifyLeadTimeSeconds, forKey: Keys.notifyLeadTime) }
     }
-    @Published var ghosttyFocusEnabled: Bool {
-        didSet { UserDefaults.standard.set(ghosttyFocusEnabled, forKey: Keys.ghosttyFocusEnabled) }
+    @Published var terminalFocusEnabled: Bool {
+        didSet { UserDefaults.standard.set(terminalFocusEnabled, forKey: Keys.terminalFocusEnabled) }
     }
     /// Cap on automatic keep-alive pings (see KeepAliveTracker) for a session whose TTL is the 5-minute
     /// bucket — higher than the 1h bucket's cap because each ping only buys 5 minutes of runway, so
@@ -79,7 +79,7 @@ final class SettingsStore: ObservableObject {
         static let expiringSoonThreshold = "expiringSoonThresholdSeconds"
         static let notifyBeforeCold = "notifyBeforeCold"
         static let notifyLeadTime = "notifyLeadTimeSeconds"
-        static let ghosttyFocusEnabled = "ghosttyFocusEnabled"
+        static let terminalFocusEnabled = "terminalFocusEnabled"
         static let keepAliveMaxPings5m = "keepAliveMaxPings5m"
         static let keepAliveMaxPings60m = "keepAliveMaxPings60m"
         static let keepAliveLeadSeconds = "keepAliveLeadSeconds"
@@ -93,7 +93,7 @@ final class SettingsStore: ObservableObject {
         expiringSoonThresholdSeconds = (d.object(forKey: Keys.expiringSoonThreshold) as? Double) ?? 90
         notifyBeforeCold = (d.object(forKey: Keys.notifyBeforeCold) as? Bool) ?? true
         notifyLeadTimeSeconds = (d.object(forKey: Keys.notifyLeadTime) as? Double) ?? 60
-        ghosttyFocusEnabled = (d.object(forKey: Keys.ghosttyFocusEnabled) as? Bool) ?? true
+        terminalFocusEnabled = (d.object(forKey: Keys.terminalFocusEnabled) as? Bool) ?? true
         keepAliveMaxPings5m = (d.object(forKey: Keys.keepAliveMaxPings5m) as? Double) ?? 10
         keepAliveMaxPings60m = (d.object(forKey: Keys.keepAliveMaxPings60m) as? Double) ?? 3
         keepAliveLeadSeconds = (d.object(forKey: Keys.keepAliveLeadSeconds) as? Double) ?? 30

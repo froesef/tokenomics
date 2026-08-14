@@ -7,9 +7,10 @@ import SwiftUI
 /// dialog offering to jump to the expiring session and paste a `/handoff`, in addition to the system
 /// notification.
 ///
-/// "Handoff" pastes `/handoff` into the terminal via `GhosttyController.pasteText` — Ghostty's native
-/// "as if pasted" semantics, which never presses Return — then focuses it. The user still runs it
-/// themselves; nothing here executes on its own, per spec.md §11 ("read-and-focus only").
+/// "Handoff" pastes `/handoff` into the terminal via `TerminalController.pasteText` — a paste with no
+/// Return press, into whichever supported terminal (Ghostty, iTerm2) has the session's tab open — then
+/// focuses it. The user still runs it themselves; nothing here executes on its own, per spec.md §11
+/// ("read-and-focus only").
 @MainActor
 final class BannerPresenter {
     private var shownForTurn: [String: Date] = [:]

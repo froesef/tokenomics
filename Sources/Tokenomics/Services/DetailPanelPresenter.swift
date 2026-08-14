@@ -19,7 +19,7 @@ final class DetailPanelPresenter {
     private var window: NSWindow?
 
     func show(
-        session: Session, settings: SettingsStore, hasOpenTab: Bool, timeSinceLastActive: TimeInterval?,
+        session: Session, settings: SettingsStore, hasOpenTab: Bool, terminalName: String?, timeSinceLastActive: TimeInterval?,
         keepAliveInfo: KeepAliveInfo, anchorWindow: NSWindow?,
         onFocus: @escaping () -> Void, onPasteCommand: @escaping (String) -> Void,
         onPing: @escaping () -> Void, onOpenInCodex: @escaping () -> Void, onToggleKeepAlive: @escaping () -> Void,
@@ -28,7 +28,8 @@ final class DetailPanelPresenter {
         hide()
 
         let view = SessionDetailPanelView(
-            session: session, settings: settings, hasOpenTab: hasOpenTab, timeSinceLastActive: timeSinceLastActive,
+            session: session, settings: settings, hasOpenTab: hasOpenTab, terminalName: terminalName,
+            timeSinceLastActive: timeSinceLastActive,
             keepAliveInfo: keepAliveInfo,
             onFocus: onFocus, onPasteCommand: onPasteCommand, onPing: onPing,
             onOpenInCodex: onOpenInCodex, onToggleKeepAlive: onToggleKeepAlive,

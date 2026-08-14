@@ -23,6 +23,6 @@
     <key>NSHumanReadableCopyright</key>
     <string>Personal tool — no distribution.</string>
     <key>NSAppleEventsUsageDescription</key>
-    <string>Tokenomics uses Automation to ask Ghostty which tab is open in a given project directory, so it can bring that tab to the front when you click a session.</string>
+    <string>Tokenomics uses Automation to ask your terminal (Ghostty or iTerm2) which tab is open in a given project directory, so it can bring that tab to the front when you click a session.</string>
 </dict>
 </plist>

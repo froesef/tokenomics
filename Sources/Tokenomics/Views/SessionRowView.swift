@@ -1,17 +1,18 @@
 import SwiftUI
 
-/// One row in the dropdown (spec.md §3). Double-clicking a row focuses the matching Ghostty tab when
+/// One row in the dropdown (spec.md §3). Double-clicking a row focuses the matching terminal tab when
 /// available and closes the dropdown (see `SessionListViewModel.focus`) — this is also how the "switch
 /// windows/tabs to that session" behavior is exposed from the dropdown, not just from the expiry banner.
 /// Single click is deliberately a no-op here: it's the same click a user makes just skimming down the
-/// list to read rows, and firing Ghostty's AppleScript `activate` on every one of those would yank focus
-/// away from whatever the user's looking at. Hovering shows a flyout detail panel beside the dropdown
+/// list to read rows, and firing the terminal's AppleScript `activate` on every one of those would yank
+/// focus away from whatever the user's looking at. Hovering shows a flyout detail panel beside the dropdown
 /// (see DetailPanelPresenter) with categorized tool/plugin usage, session facts, and the same paste/focus
 /// actions; right-click keeps a plain context menu as a redundant fast path for the same actions.
 ///
-/// `hasOpenTab` is a real per-session cross-reference against Ghostty's currently open terminals (see
-/// GhosttyController.hasOpenTab), not just "is Ghostty running" — a session with no matching tab shows no
-/// focus affordance rather than a button that would silently no-op.
+/// `hasOpenTab` is a real per-session cross-reference against every supported terminal's currently open
+/// tabs (Ghostty, iTerm2, … see `TerminalController`/`CompositeTerminalController`), not just "is some
+/// terminal running" — a session with no matching tab shows no focus affordance rather than a button that
+/// would silently no-op.
 struct SessionRowView: View {
     let session: Session
     let now: Date
