@@ -66,12 +66,4 @@ enum Pricing {
         guard let perToken = inputUSDPerToken(model: model) else { return nil }
         return Double(readTokens) * (1.0 - readMultiplier) * perToken
     }
-
-    /// Dollars saved by a token-filtering CLI proxy (`rtk`) trimming shell output before it
-    /// ever reached the model: those tokens never entered context, so they're valued at full
-    /// uncached input price (1×). Nil when the model is unknown.
-    static func filteredTokenSavingsUSD(savedTokens: Int, model: String?) -> Double? {
-        guard let perToken = inputUSDPerToken(model: model) else { return nil }
-        return Double(savedTokens) * perToken
-    }
 }

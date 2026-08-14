@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The savings/waste "meter" at the top of the dropdown: today's cold-cache waste and caching/rtk savings,
+/// The savings/waste "meter" at the top of the dropdown: today's cold-cache waste and caching savings,
 /// side by side. Shown only when there's something to report (otherwise the dropdown opens straight to the
 /// session list). Tokens are the headline number (exact from transcripts); dollars are a labeled estimate
 /// (see Pricing / SavingsMeter). Hover either figure for the breakdown.
@@ -26,7 +26,7 @@ struct MeterStripView: View {
     private var lostRow: some View {
         HStack(spacing: 6) {
             Text("🔻")
-            Text("Lost today")
+            Text("Lost (24h)")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.primary)
             Text(Self.tokens(meter.lostTokens))
@@ -43,13 +43,13 @@ struct MeterStripView: View {
         }
         .help("Tokens re-written because a session's prompt cache went cold after sitting idle past its TTL. "
             + "Keep working in a session (or use Auto Keep-Alive) before it goes cold to avoid this. "
-            + "Token count is exact; the dollar figure is an estimate.")
+            + "Scoped to expirations in the trailing 24h. Token count is exact; the dollar figure is an estimate.")
     }
 
     private var savedRow: some View {
         HStack(spacing: 6) {
             Text("✅")
-            Text("Saved today")
+            Text("Saved (24h, caching)")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.primary)
             Text(Self.money(meter.savedCostUSD))
@@ -67,14 +67,10 @@ struct MeterStripView: View {
     }
 
     private var savedBreakdown: String {
-        var parts = ["Estimated savings today:"]
-        if meter.cacheSavingsUSD > 0 {
-            parts.append("• \(Self.money(meter.cacheSavingsUSD)) from warm-cache reads (billed ~0.1× vs. full input price)")
-        }
-        if meter.rtkSavingsUSD > 0 {
-            parts.append("• \(Self.money(meter.rtkSavingsUSD)) from rtk trimming shell output before it reached the model")
-        }
-        return parts.joined(separator: "\n")
+        "Not money you got back — a comparison. These tokens were read from a warm prompt cache "
+            + "(billed ~0.1× input price) instead of being resent at full price. \"Saved\" = what that "
+            + "same traffic would have cost without caching, minus what it actually cost. Scoped to reads "
+            + "in the trailing 24h, across sessions still open or recently active."
     }
 
     /// "128,400 tokens" with a thousands separator, singular/plural aware.

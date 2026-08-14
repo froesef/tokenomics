@@ -89,6 +89,7 @@ final class TranscriptWatcher {
         // counts).
         var seenRequestIDs = Set<String>()
         var expiryEvents: [CacheExpiryEvent] = []
+        var cacheReadEvents: [CacheReadEvent] = []
         var lastTurnAt: Date?          // timestamp of the previous *deduped* assistant turn
         // Anchor for the cache TTL countdown — see Session.cacheTouchTime. Tracks the same "first line of
         // the latest deduped assistant turn" instant as `lastTurnAt`, but is also cleared to nil whenever
@@ -233,6 +234,9 @@ final class TranscriptWatcher {
             cacheCreation += turnCreation
             cacheRead += turnRead
             lastTurnContextTokens = turnCreation + turnRead
+            if turnRead > 0, let turnTime = lastTimestamp {
+                cacheReadEvents.append(CacheReadEvent(time: turnTime, tokens: turnRead))
+            }
 
             // Ground truth for the TTL in effect on this turn, when Claude Code reports it.
             if let creation = usage["cache_creation"] as? [String: Any] {
@@ -298,6 +302,7 @@ final class TranscriptWatcher {
             compactionStartedAt: compactionStartedAt,
             detectedTTL: lastDetectedTTL,
             expiryEvents: expiryEvents,
+            cacheReadEvents: cacheReadEvents,
             loadedToolResultChars: maxLoadedToolResultChars > 0 ? maxLoadedToolResultChars : nil,
             loadedToolResultToolName: maxLoadedToolResultChars > 0 ? maxLoadedToolResultToolName : nil,
             cost: nil

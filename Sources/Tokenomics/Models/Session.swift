@@ -53,6 +53,16 @@ struct CacheExpiryEvent: Equatable, Sendable {
     let ttl: TimeInterval
 }
 
+/// One warm-cache read observed in a transcript: a turn served from the prompt cache instead of paying
+/// full input price for the resent prefix. Per-turn (not a session-lifetime total) so the "saved today"
+/// meter can filter to the same trailing-24h window as `CacheExpiryEvent`, instead of counting a
+/// long-lived session's entire history as "today".
+struct CacheReadEvent: Equatable, Sendable {
+    let time: Date
+    /// `cache_read_input_tokens` on that turn. Exact.
+    let tokens: Int
+}
+
 /// One coding-agent session: one transcript file or rollout, one working directory, and any cache usage
 /// metadata the source format exposes.
 struct Session: Identifiable, Equatable, Sendable {
@@ -131,6 +141,10 @@ struct Session: Identifiable, Equatable, Sendable {
     /// Cold-cache rewrite events found in this transcript (see CacheExpiryEvent) — the input to the
     /// "lost to cache expirations today" meter. One entry per idle gap that let the cache go cold.
     var expiryEvents: [CacheExpiryEvent] = []
+
+    /// Warm-cache-read events found in this transcript (see CacheReadEvent) — the input to the
+    /// "saved today" meter, scoped the same way `expiryEvents` scopes "lost today".
+    var cacheReadEvents: [CacheReadEvent] = []
 
     /// Size, in characters, of the largest single `tool_result` still loaded in context (nothing has
     /// `/compact`ed or `/clear`ed it away since it landed) — the "big tool dump" signal. A huge inline
