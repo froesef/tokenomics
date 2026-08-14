@@ -1,5 +1,9 @@
 # Tokenomics
 
+[![CI](https://github.com/froesef/tokenomics/actions/workflows/ci.yml/badge.svg)](https://github.com/froesef/tokenomics/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/froesef/tokenomics)](LICENSE)
+[![Latest release](https://img.shields.io/github/v/release/froesef/tokenomics)](https://github.com/froesef/tokenomics/releases/latest)
+
 A macOS menu bar app that shows local coding-agent sessions: [Claude Code](https://code.claude.com)
 prompt-cache countdowns, costs, and cache-hit ratios, plus Codex cached-input token usage from local
 session rollouts.
