@@ -8,10 +8,14 @@
     <string>Tokenomics</string>
     <key>CFBundleIdentifier</key>
     <string>dev.local.tokenomics</string>
+    <!-- Build identifier — overwritten with the short git commit hash by Scripts/build_app.sh so every
+         built .app is traceable to the exact source it came from. This checked-in value is only what
+         `swift run` (no bundling step) sees. -->
     <key>CFBundleVersion</key>
-    <string>1.0</string>
+    <string>dev</string>
+    <!-- Marketing version — bump this alongside the release tag; see CONTRIBUTING.md#versioning. -->
     <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
+    <string>0.1.0</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleExecutable</key>

@@ -28,5 +28,11 @@ mkdir -p "${APP_BUNDLE}/Contents/Resources"
 cp "${BIN_PATH}" "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
 cp Resources/Info.plist "${APP_BUNDLE}/Contents/Info.plist"
 
+# Stamp CFBundleVersion with the short git commit hash so the built .app is traceable to the exact
+# source it came from — shows up as "Version 0.1.0 (a1b2c3d)" in the standard About panel. Falls back to
+# "unknown" outside a git checkout (e.g. a source tarball) rather than failing the build.
+GIT_HASH="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${GIT_HASH}" "${APP_BUNDLE}/Contents/Info.plist"
+
 echo "==> Done: ${APP_BUNDLE}"
 echo "    open '${APP_BUNDLE}'"
