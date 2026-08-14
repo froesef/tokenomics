@@ -34,6 +34,12 @@ struct TokenomicsApp: App {
             TokenTipsView()
         }
         .windowResizability(.contentSize)
+
+        // Custom About window (AboutView) instead of the plain AppKit About panel — see AboutView.swift.
+        Window("About Tokenomics", id: "about") {
+            AboutView()
+        }
+        .windowResizability(.contentSize)
     }
 }
 

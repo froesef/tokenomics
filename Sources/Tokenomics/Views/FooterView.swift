@@ -49,13 +49,12 @@ struct FooterView: View {
             .buttonStyle(.plain)
             .onHover { hoveringTokenTips = $0 }
 
-            // Standard AppKit About panel — it already reads CFBundleShortVersionString /
-            // CFBundleVersion straight from Info.plist and renders "Version 0.1.0 (a1b2c3d)" with no
-            // custom view needed. CFBundleVersion is the short git commit hash, stamped at build time
-            // by Scripts/build_app.sh (see CONTRIBUTING.md#versioning).
+            // AboutView reads CFBundleShortVersionString / CFBundleVersion straight from Info.plist —
+            // CFBundleVersion is the short git commit hash, stamped at build time by
+            // Scripts/build_app.sh (see CONTRIBUTING.md#versioning).
             Button {
                 NSApp.activate(ignoringOtherApps: true)
-                NSApp.orderFrontStandardAboutPanel(nil)
+                openWindow(id: "about")
             } label: {
                 MenuRowLabel(title: "About Tokenomics", isHovering: hoveringAbout)
             }
