@@ -21,16 +21,26 @@ struct SettingsView: View {
     var body: some View {
         Form {
             Section("Session Monitoring") {
-                LabeledContent("Refresh interval") {
+                LabeledContent {
                     Stepper(value: $settings.refreshIntervalSeconds, in: 5...60, step: 5) {
                         Text("\(Int(settings.refreshIntervalSeconds))s")
                     }
+                } label: {
+                    SettingLabel(
+                        title: "Refresh interval",
+                        description: "How often to re-scan transcripts on the polling timer, as a backup to the file watcher that normally picks up changes right away."
+                    )
                 }
 
-                LabeledContent("Expiring-soon threshold") {
+                LabeledContent {
                     Stepper(value: $settings.expiringSoonThresholdSeconds, in: 15...300, step: 15) {
                         Text("\(Int(settings.expiringSoonThresholdSeconds))s")
                     }
+                } label: {
+                    SettingLabel(
+                        title: "Expiring-soon threshold",
+                        description: "Mark a session's cache status \"expiring soon\" (orange) once its countdown drops below this many seconds, instead of staying \"warm\" (green) until the moment it goes cold."
+                    )
                 }
             }
 
