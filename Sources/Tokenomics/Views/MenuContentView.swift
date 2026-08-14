@@ -24,7 +24,7 @@ struct MenuContentView: View {
             Divider()
 
             if viewModel.sessions.isEmpty {
-                Text("No active coding sessions found")
+                Text(viewModel.hasScannedOnce ? "No active coding sessions found" : "Scanning for coding sessions…")
                     .foregroundStyle(.secondary)
                     .padding()
             } else {

@@ -9,11 +9,12 @@ release:
 app: release
 	./Scripts/build_app.sh
 
-run: app
+run: stop app
 	open .build/Tokenomics.app
 
 stop:
 	-pkill -x Tokenomics
+	@while pgrep -x Tokenomics >/dev/null; do sleep 0.1; done
 
 clean:
 	rm -rf .build

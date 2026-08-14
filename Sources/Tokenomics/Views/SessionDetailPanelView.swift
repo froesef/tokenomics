@@ -239,15 +239,22 @@ struct SessionDetailPanelView: View {
         }
     }
 
+    /// Claude's already mid-turn (or mid-`/compact`) — pasting another command or pinging "still there?"
+    /// would just queue behind or collide with that, so those rows gray out. Focus and the Auto Keep-Alive
+    /// toggle stay live either way: they don't touch the terminal's input.
+    private var isSessionBusy: Bool {
+        session.activity == .running || session.activity == .compacting
+    }
+
     private var actions: some View {
         VStack(alignment: .leading, spacing: 0) {
             if session.agentKind == .codex {
                 actionRow("Open in Codex", isHovering: $hoveringOpenCodex, isEnabled: session.codexThreadURL != nil, action: onOpenInCodex)
             } else {
                 actionRow("Focus Tab", isHovering: $hoveringFocus, action: onFocus)
-                actionRow("Paste /handoff", isHovering: $hoveringHandoff) { onPasteCommand("/handoff") }
-                actionRow("Paste /compact", isHovering: $hoveringCompact) { onPasteCommand("/compact") }
-                actionRow("Ping (\"still there?\")", isHovering: $hoveringPing, action: onPing)
+                actionRow("Paste /handoff", isHovering: $hoveringHandoff, isEnabled: hasOpenTab && !isSessionBusy) { onPasteCommand("/handoff") }
+                actionRow("Paste /compact", isHovering: $hoveringCompact, isEnabled: hasOpenTab && !isSessionBusy) { onPasteCommand("/compact") }
+                actionRow("Ping (\"still there?\")", isHovering: $hoveringPing, isEnabled: hasOpenTab && !isSessionBusy, action: onPing)
                 actionRow(keepAliveActionTitle, isHovering: $hoveringKeepAlive, action: onToggleKeepAlive)
             }
         }
