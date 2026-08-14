@@ -8,8 +8,11 @@ struct SessionDetailPanelView: View {
     let session: Session
     let settings: SettingsStore
     let hasOpenTab: Bool
-    /// Best-effort seconds since Ghostty's frontmost tab last pointed at this directory — see
-    /// GhosttyController.timeSinceLastActive. Nil if never observed.
+    /// Which terminal backend (Ghostty, iTerm2, …) actually has this directory open — see
+    /// TerminalController.terminalName(for:). Nil when no backend has a matching tab.
+    let terminalName: String?
+    /// Best-effort seconds since the matching terminal's frontmost tab last pointed at this directory —
+    /// see TerminalController.timeSinceLastActive. Nil if never observed.
     let timeSinceLastActive: TimeInterval?
     let keepAliveInfo: KeepAliveInfo
     let onFocus: () -> Void
@@ -110,7 +113,7 @@ struct SessionDetailPanelView: View {
                 infoRow("Cost", String(format: "$%.2f", cost))
             }
             if session.agentKind == .claudeCode {
-                infoRow("Ghostty tab", hasOpenTab ? "open" : "not found")
+                infoRow("Terminal", terminalName ?? "not found")
                 infoRow("Process", processDescription)
             }
             if let rtkStats = session.rtkStats {

@@ -22,7 +22,7 @@ struct TokenomicsApp: App {
         // A real window (opened from FooterView), not a sheet — see FooterView.swift. `.contentSize`
         // resizability locks the window to SettingsView's natural size: without it, the window was
         // resizable below that size and Form clips rather than wraps its labels — reported directly, with
-        // a screenshot showing "Expiring-soon threshold" and "Enable Ghostty focus action" cut off.
+        // a screenshot showing "Expiring-soon threshold" and "Enable terminal focus action" cut off.
         Settings {
             SettingsView(settings: viewModel.settings)
         }
