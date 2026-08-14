@@ -80,6 +80,12 @@ final class TranscriptWatcher {
         var lastVisibleCharCount: Int?
         var activity: SessionActivity = .idle
         var compactionStartedAt: Date?
+        // Set on `compact_boundary`, cleared on the first event that isn't part of that boundary's echo
+        // trailer (continuation summary, `<local-command-caveat>`, the `/compact` command-name echo,
+        // `<local-command-stdout>`) — see the comment on `isCompactionTrailer`. Unlike every other slash
+        // command, `/compact` has no closing `system/local_command` event to snap activity back to idle
+        // once its trailer prints, so without this flag those trailer lines look like a fresh user turn.
+        var awaitingCompactionEcho = false
 
         // Cold-cache rewrite detection (see CacheExpiryEvent). A single API call emits multiple JSONL
         // lines that all repeat the same `usage` object (one per content block: text, thinking, tool_use)
@@ -160,6 +166,7 @@ final class TranscriptWatcher {
             Self.updateActivity(
                 for: obj, lastTimestamp: lastTimestamp,
                 activity: &activity, compactionStartedAt: &compactionStartedAt, pendingCommandName: &pendingCommandName,
+                awaitingCompactionEcho: &awaitingCompactionEcho,
                 cacheCreation: &cacheCreation, cacheRead: &cacheRead, cacheTouchTime: &cacheTouchTime,
                 toolUsage: &toolUsage, lastVisibleCharCount: &lastVisibleCharCount,
                 maxLoadedToolResultChars: &maxLoadedToolResultChars, maxLoadedToolResultToolName: &maxLoadedToolResultToolName
@@ -322,6 +329,7 @@ final class TranscriptWatcher {
     private static func updateActivity(
         for obj: [String: Any], lastTimestamp: Date?,
         activity: inout SessionActivity, compactionStartedAt: inout Date?, pendingCommandName: inout String?,
+        awaitingCompactionEcho: inout Bool,
         cacheCreation: inout Int, cacheRead: inout Int, cacheTouchTime: inout Date?,
         toolUsage: inout ToolUsage, lastVisibleCharCount: inout Int?,
         maxLoadedToolResultChars: inout Int, maxLoadedToolResultToolName: inout String?
@@ -336,6 +344,7 @@ final class TranscriptWatcher {
             case "compact_boundary":
                 activity = .idle
                 compactionStartedAt = nil
+                awaitingCompactionEcho = true
                 // The old cache prefix no longer reflects what's actually loaded post-compaction.
                 cacheCreation = 0
                 cacheRead = 0
@@ -364,14 +373,20 @@ final class TranscriptWatcher {
         } else if type == "user", let message = obj["message"] as? [String: Any] {
             if let content = message["content"] as? String {
                 let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
-                if trimmed == "/compact" {
-                    activity = .compacting
-                    compactionStartedAt = lastTimestamp
-                } else if let name = commandName(from: trimmed) {
-                    pendingCommandName = name
-                    activity = .running
+                if awaitingCompactionEcho && isCompactionTrailer(trimmed) {
+                    // Part of the batch `compact_boundary` flushed, not a new turn — see
+                    // `awaitingCompactionEcho`'s doc comment. Stay idle and don't touch pendingCommandName.
                 } else {
-                    activity = .running
+                    awaitingCompactionEcho = false
+                    if trimmed == "/compact" {
+                        activity = .compacting
+                        compactionStartedAt = lastTimestamp
+                    } else if let name = commandName(from: trimmed) {
+                        pendingCommandName = name
+                        activity = .running
+                    } else {
+                        activity = .running
+                    }
                 }
             } else if let blocks = message["content"] as? [[String: Any]] {
                 // A message made only of tool_result blocks is Claude Code feeding a tool's output back
@@ -405,6 +420,18 @@ final class TranscriptWatcher {
               let end = content.range(of: "</command-name>")?.lowerBound,
               start < end else { return nil }
         return String(content[start..<end]).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Matches the fixed sequence of `user`-typed events Claude Code flushes right after a
+    /// `compact_boundary`: the continuation summary, the `<local-command-caveat>` wrapper, the
+    /// `/compact` `<command-name>` echo, and its `<local-command-stdout>` — confirmed by inspecting real
+    /// transcripts. None of these represent a new turn opening; they're the tail end of the compaction
+    /// that already closed on `compact_boundary`.
+    private static func isCompactionTrailer(_ content: String) -> Bool {
+        content.hasPrefix("This session is being continued from a previous conversation")
+            || content.contains("<local-command-caveat>")
+            || commandName(from: content) == "/compact"
+            || content.contains("<local-command-stdout>")
     }
 
     /// Best-effort fallback when no event in the transcript carries a `cwd` field: reverses the
