@@ -81,11 +81,11 @@ struct SettingsView: View {
                 }
             }
 
-            Section("Auto Keep-Alive") {
+            Section("Auto Keep-Alive (Experimental)") {
                 Toggle(isOn: $settings.keepAliveAllActiveSessions) {
                     SettingLabel(
                         title: "Keep every active session alive",
-                        description: "Automatically turns on Auto Keep-Alive for any session whose cache is still hot, so you don't have to switch it on per session."
+                        description: "Experimental. Automatically turns on Auto Keep-Alive for any session whose cache is still hot, so you don't have to switch it on per session."
                     )
                 }
 

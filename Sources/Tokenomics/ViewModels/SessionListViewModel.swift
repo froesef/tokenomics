@@ -9,6 +9,9 @@ final class SessionListViewModel: ObservableObject {
     @Published private(set) var sessions: [Session] = []
     @Published private(set) var now: Date = .init()
     @Published private(set) var dependencyWarnings: [String] = []
+    /// False until the first `rescan()` completes — distinguishes "still scanning" from "scanned and
+    /// genuinely found nothing" in the empty-state message (see MenuContentView).
+    @Published private(set) var hasScannedOnce = false
 
     /// Today's savings/waste meter (see MeterStripView), recomputed from the transcripts on every rescan —
     /// no separate persistence, since the transcripts are the persistence. "Today" = the last 24h, matching
@@ -222,6 +225,7 @@ final class SessionListViewModel: ObservableObject {
         // Recompute today's savings/waste meter from the freshly-scanned sessions (transcripts are the
         // persistence — nothing extra is stored). Uses `currentNow` so it's consistent with this scan.
         meter = SavingsMeter.compute(sessions: sessions, now: currentNow)
+        hasScannedOnce = true
 
         // No console/UI elsewhere surfaces this for a menu-bar-only app — run the built .app from
         // Terminal (see README "Debugging") to see per-scan session counts and warnings.
@@ -232,29 +236,13 @@ final class SessionListViewModel: ObservableObject {
 
     // MARK: - Notifications / banners
 
-    /// How much extra runway to give a session before warning, on top of the user's base lead-time
-    /// setting — requested directly, scaled by two signals: how much there was to read last time (more
-    /// text → assume more reading time before the user could plausibly act) and how long it's been since
-    /// the user was actually looking at this tab (longer away → they haven't started reading yet, so the
-    /// warning needs to land early enough that there's still time once they do look back). Both are rough
-    /// heuristics, not measured reading behavior, so each is capped to keep a huge response or a long-idle
-    /// tab from blowing the lead time out to something absurd.
-    private func adaptiveLeadTime(for session: Session) -> TimeInterval {
-        let base = settings.notifyLeadTimeSeconds
-        // ~15 chars/sec is a conservative skim-reading pace (well above the ~180-250wpm typical range).
-        let readingSeconds = min(240, Double(session.lastVisibleCharCount ?? 0) / 15)
-        let idleSeconds = terminal.timeSinceLastActive(workingDirectory: session.workingDirectory) ?? 0
-        let idleBuffer = min(120, idleSeconds / 10)
-        return base + readingSeconds + idleBuffer
-    }
-
     private func checkNotifications() {
         guard settings.notifyBeforeCold else { return }
         for session in sessions {
             guard session.supportsCacheCountdown else { continue }
             let ttl = session.effectiveTTL(fallback: settings.ttl)
             let remaining = session.remaining(now: now, ttl: ttl)
-            let leadTime = adaptiveLeadTime(for: session)
+            let leadTime = settings.notifyLeadTimeSeconds
             notifications.notifyIfNeeded(session: session, remaining: remaining, leadTime: leadTime)
             if remaining > 0 && remaining <= leadTime {
                 banners.presentIfNeeded(
@@ -422,9 +410,6 @@ final class SessionListViewModel: ObservableObject {
             hoverTask = Task { [weak self] in
                 try? await Task.sleep(for: .milliseconds(300))
                 guard !Task.isCancelled, let self, self.pointerOverRow else { return }
-                // A turn already in flight (Claude working or a /compact running) needs no user action and
-                // no keep-alive ping — nothing in the panel would be useful, so don't show it at all.
-                guard session.activity != .running, session.activity != .compacting else { return }
                 self.shownPanelSessionID = session.id
                 self.shownPanelCacheTouchTime = session.cacheTouchTime
                 self.detailPanel.show(
@@ -472,15 +457,12 @@ final class SessionListViewModel: ObservableObject {
 
     /// Closes the open detail panel if the session it belongs to just had its cache-touch anchor change —
     /// a fresh assistant turn landed (counter reset to full) or the cache went cold via /compact or /clear
-    /// — or just started a turn (`.running`/`.compacting`), so the panel never sits open showing a stale
-    /// snapshot, or offering actions with nothing useful to do, while a reply is already in flight. Called
-    /// once per rescan.
+    /// — so the panel never sits open showing a stale snapshot. Called once per rescan.
     private func closeDetailPanelIfSessionReset() {
         guard let id = shownPanelSessionID else { return }
         guard let session = sessions.first(where: { $0.id == id }) else { return }
         let staleSnapshot = session.cacheTouchTime != shownPanelCacheTouchTime
-        let nowInFlight = session.activity == .running || session.activity == .compacting
-        guard staleSnapshot || nowInFlight else { return }
+        guard staleSnapshot else { return }
         hoverTask?.cancel()
         pointerOverRow = false
         pointerOverPanel = false
