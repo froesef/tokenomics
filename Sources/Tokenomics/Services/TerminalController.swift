@@ -29,6 +29,18 @@ protocol TerminalController: AnyObject {
     /// idle Ghostty tab at the repo root outranked the real, exact-match iTerm2 session simply because
     /// Ghostty came first in `CompositeTerminalController`'s backend list.
     func hasExactOpenTab(workingDirectory: String) -> Bool
+    /// Same signal as `hasExactOpenTab`, refined with the session's `aiTitle` when known. Used only by
+    /// `CompositeTerminalController` to choose *which backend* actually has the real matching terminal
+    /// when more than one terminal app happens to have some tab open at this exact working directory —
+    /// e.g. an unrelated/stray Ghostty tab that coincidentally shares a cwd with the iTerm2 session that's
+    /// actually running it. Without this, backend selection was a blind `hasExactOpenTab` check with no
+    /// title awareness, so the first backend in `CompositeTerminalController.controllers` (Ghostty) always
+    /// won ties regardless of which one was real — confirmed live: a `hello-world` session running in
+    /// iTerm2 got forwarded to Ghostty because some other Ghostty tab happened to share its cwd.
+    /// Cheap: backed by the same per-poll cache as `hasOpenTab`, no extra AppleScript call. The default
+    /// implementation below just defers to `hasExactOpenTab` (ignoring `aiTitle`) for any backend that
+    /// doesn't bother distinguishing.
+    func hasPlausibleExactOpenTab(workingDirectory: String, aiTitle: String?) -> Bool
     /// This backend's display name when it has a matching tab open at `workingDirectory`, nil otherwise —
     /// what the info panel shows. The default below is right for any single-backend controller;
     /// `CompositeTerminalController` overrides it to name whichever backend actually matched.
@@ -42,13 +54,19 @@ protocol TerminalController: AnyObject {
     /// directory (e.g. one pane running the Claude Code session, a plain idle shell twin sitting at the
     /// same path in another split). Pass `Session.aiTitle` here whenever it's available; a caller with no
     /// session context can omit it.
-    func focusTab(workingDirectory: String, aiTitle: String?) async throws
+    ///
+    /// `sessionId` (`Session.id`) is the cache key backends use to remember which specific terminal/tab/
+    /// session object they matched last time, keyed by Ghostty/iTerm2's own stable per-object `id` — see
+    /// the doc comment on `GhosttyController`'s `resolvedTerminalIds`. Working directory alone can't serve
+    /// as that key: two different sessions (e.g. two tabs opened in the same repo) can share one cwd, which
+    /// is exactly the ambiguity the id cache exists to route around.
+    func focusTab(sessionId: String, workingDirectory: String, aiTitle: String?) async throws
     /// Pastes text into the matching terminal — lands in the terminal's input line for the user to review
     /// and run themselves, never executed on its own. See spec.md §11 ("read-and-focus only"). `activate`
     /// controls whether the terminal app is brought forward afterward: true for /handoff, /compact, and
     /// other explicit paste actions the user expects to see land; false for the manual Ping button, which
     /// pastes its keep-alive question quietly without stealing focus from whatever window the user is on.
-    func pasteText(_ text: String, workingDirectory: String, aiTitle: String?, activate: Bool) async throws
+    func pasteText(_ text: String, sessionId: String, workingDirectory: String, aiTitle: String?, activate: Bool) async throws
     /// Pastes text into the matching terminal, then submits it — unlike `pasteText`, this one *does*
     /// execute whatever was pasted, with no user step in between. This is a deliberate, narrow exception to
     /// the "read-and-focus only" rule above: used exclusively by the automatic keep-alive feature (see
@@ -57,7 +75,7 @@ protocol TerminalController: AnyObject {
     /// this app should use this. Unlike every other action here, this one never focuses the tab or
     /// activates the terminal app — being unattended is exactly why it must stay quiet and not steal focus
     /// from whatever the user is doing right now.
-    func pasteTextAndSubmit(_ text: String, workingDirectory: String, aiTitle: String?) async throws
+    func pasteTextAndSubmit(_ text: String, sessionId: String, workingDirectory: String, aiTitle: String?) async throws
     /// Re-probes availability and re-fetches the set of open working directories. Availability and open
     /// tabs both change while the app runs, so callers should call this periodically (the ViewModel does,
     /// on its regular refresh) rather than caching either forever.
@@ -67,6 +85,10 @@ protocol TerminalController: AnyObject {
 extension TerminalController {
     func terminalName(for workingDirectory: String) -> String? {
         hasOpenTab(workingDirectory: workingDirectory) ? displayName : nil
+    }
+
+    func hasPlausibleExactOpenTab(workingDirectory: String, aiTitle: String?) -> Bool {
+        hasExactOpenTab(workingDirectory: workingDirectory)
     }
 }
 

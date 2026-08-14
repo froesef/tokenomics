@@ -61,18 +61,24 @@ final class TranscriptWatcher {
         return text.contains("\"sessionId\"")
     }
 
-    /// Parses one transcript. Tolerant by design: transcripts are appended to live by another process,
-    /// so a half-written last line is normal and must be skipped, never treated as an error.
-    func loadSession(from url: URL) -> Session? {
-        guard let data = try? Data(contentsOf: url),
-              let text = String(data: data, encoding: .utf8) else { return nil }
-
+    /// Every mutable signal accumulated while walking a transcript's lines in order — pulled out of
+    /// `loadSession` (which used to declare all of these as loose `var`s) purely to shrink that function
+    /// to "read the file, feed it lines, build a `Session`"; nothing about how any signal is computed
+    /// changed. Nested (not a top-level type) so its methods keep access to `TranscriptWatcher`'s private
+    /// static helpers (`updateActivity`, `accumulateToolUsage`).
+    @MainActor
+    private struct ParseState {
         var cacheCreation = 0
         var cacheRead = 0
         var lastTimestamp: Date?
         var workingDirectory: String?
         var lastDetectedTTL: TimeInterval?
         var aiTitle: String?
+        // Set by `/rename` (`{"type":"custom-title","customTitle":"..."}`) — a distinct event from
+        // `ai-title`, Claude Code's own auto-generated label. A user-chosen name always wins: once set,
+        // later `ai-title` events (Claude Code still emits them) must not clobber it back to the
+        // auto-generated title, so this is applied on top of `aiTitle` below rather than merged inline.
+        var customTitle: String?
         var toolUsage = ToolUsage()
         var lastModel: String?
         var lastEffort: String?
@@ -125,13 +131,7 @@ final class TranscriptWatcher {
         // finished — only `/clear` resets the accumulators below.
         var pendingCommandName: String?
 
-        let iso = ISO8601DateFormatter()
-        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-
-        for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
-            guard let lineData = line.data(using: .utf8),
-                  let obj = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any] else { continue }
-
+        mutating func process(_ obj: [String: Any], iso: ISO8601DateFormatter) {
             if let cwd = obj["cwd"] as? String {
                 workingDirectory = cwd
             }
@@ -146,6 +146,9 @@ final class TranscriptWatcher {
             // Same short label Claude Code uses as the Ghostty tab title — see Session.aiTitle.
             if obj["type"] as? String == "ai-title", let title = obj["aiTitle"] as? String {
                 aiTitle = title
+            }
+            if obj["type"] as? String == "custom-title", let title = obj["customTitle"] as? String {
+                customTitle = title
             }
 
             // Hooks run transparently around a tool call rather than being chosen by the model, so they
@@ -163,7 +166,7 @@ final class TranscriptWatcher {
                 }
             }
 
-            Self.updateActivity(
+            TranscriptWatcher.updateActivity(
                 for: obj, lastTimestamp: lastTimestamp,
                 activity: &activity, compactionStartedAt: &compactionStartedAt, pendingCommandName: &pendingCommandName,
                 awaitingCompactionEcho: &awaitingCompactionEcho,
@@ -194,8 +197,13 @@ final class TranscriptWatcher {
                 }
             }
 
-            guard obj["type"] as? String == "assistant", let message = obj["message"] as? [String: Any] else { continue }
+            guard obj["type"] as? String == "assistant", let message = obj["message"] as? [String: Any] else { return }
+            processAssistantTurn(obj, message: message)
+        }
 
+        /// Model/effort/tool-use/visible-text bookkeeping, then (if this event carries a `usage` block)
+        /// cache totals, TTL detection, and cold-rewrite detection for the turn.
+        private mutating func processAssistantTurn(_ obj: [String: Any], message: [String: Any]) {
             // Read straight off the event, not inferred: which model/effort actually answered this turn.
             // Keeps overwriting so the session ends up with its *latest* turn's values.
             if let model = message["model"] as? String {
@@ -206,7 +214,7 @@ final class TranscriptWatcher {
             }
 
             if let content = message["content"] as? [[String: Any]] {
-                Self.accumulateToolUsage(from: content, into: &toolUsage)
+                TranscriptWatcher.accumulateToolUsage(from: content, into: &toolUsage)
 
                 // Remember each tool_use's id -> name so a later tool_result (which only carries the id)
                 // can be attributed back to the call that produced it.
@@ -227,13 +235,13 @@ final class TranscriptWatcher {
                 }
             }
 
-            guard let usage = message["usage"] as? [String: Any] else { continue }
+            guard let usage = message["usage"] as? [String: Any] else { return }
 
             // Dedupe by requestId: the same API call repeats its `usage` across several JSONL lines, so
             // counting every line would multiply the totals (see the comment on `seenRequestIDs`). Fall
             // back to a per-line key when no requestId is present, which just means "count this line once".
             let requestKey = (obj["requestId"] as? String) ?? (message["id"] as? String)
-            if let requestKey, seenRequestIDs.contains(requestKey) { continue }
+            if let requestKey, seenRequestIDs.contains(requestKey) { return }
             if let requestKey { seenRequestIDs.insert(requestKey) }
 
             let turnCreation = (usage["cache_creation_input_tokens"] as? Int) ?? 0
@@ -278,40 +286,57 @@ final class TranscriptWatcher {
                 cacheTouchTime = turnTime
             }
         }
+    }
 
-        let resolvedCwd = workingDirectory ?? Self.inferWorkingDirectory(from: url)
+    /// Parses one transcript. Tolerant by design: transcripts are appended to live by another process,
+    /// so a half-written last line is normal and must be skipped, never treated as an error.
+    func loadSession(from url: URL) -> Session? {
+        guard let data = try? Data(contentsOf: url),
+              let text = String(data: data, encoding: .utf8) else { return nil }
+
+        var state = ParseState()
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+
+        for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
+            guard let lineData = line.data(using: .utf8),
+                  let obj = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any] else { continue }
+            state.process(obj, iso: iso)
+        }
+
+        let resolvedCwd = state.workingDirectory ?? Self.inferWorkingDirectory(from: url)
         guard let resolvedCwd else { return nil }
 
         let mtime = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
-        let lastTurnTime = lastTimestamp ?? mtime ?? .distantPast
+        let lastTurnTime = state.lastTimestamp ?? mtime ?? .distantPast
 
         return Session(
             id: url.deletingPathExtension().lastPathComponent,
             agentKind: .claudeCode,
             workingDirectory: resolvedCwd,
-            aiTitle: aiTitle,
+            aiTitle: state.customTitle ?? state.aiTitle,
             lastTurnTime: lastTurnTime,
-            lastAssistantTurnTime: lastTurnAt ?? .distantPast,
-            cacheTouchTime: cacheTouchTime,
-            cacheCreationTokens: cacheCreation,
-            cacheReadTokens: cacheRead,
+            lastAssistantTurnTime: state.lastTurnAt ?? .distantPast,
+            cacheTouchTime: state.cacheTouchTime,
+            cacheCreationTokens: state.cacheCreation,
+            cacheReadTokens: state.cacheRead,
             totalInputTokens: nil,
             cachedInputTokens: nil,
             outputTokens: nil,
             reasoningOutputTokens: nil,
-            toolUsage: toolUsage,
-            model: lastModel,
-            effort: lastEffort,
-            version: lastVersion,
-            lastVisibleCharCount: lastVisibleCharCount,
-            currentContextTokens: lastTurnContextTokens > 0 ? lastTurnContextTokens : nil,
-            activity: activity,
-            compactionStartedAt: compactionStartedAt,
-            detectedTTL: lastDetectedTTL,
-            expiryEvents: expiryEvents,
-            cacheReadEvents: cacheReadEvents,
-            loadedToolResultChars: maxLoadedToolResultChars > 0 ? maxLoadedToolResultChars : nil,
-            loadedToolResultToolName: maxLoadedToolResultChars > 0 ? maxLoadedToolResultToolName : nil,
+            toolUsage: state.toolUsage,
+            model: state.lastModel,
+            effort: state.lastEffort,
+            version: state.lastVersion,
+            lastVisibleCharCount: state.lastVisibleCharCount,
+            currentContextTokens: state.lastTurnContextTokens > 0 ? state.lastTurnContextTokens : nil,
+            activity: state.activity,
+            compactionStartedAt: state.compactionStartedAt,
+            detectedTTL: state.lastDetectedTTL,
+            expiryEvents: state.expiryEvents,
+            cacheReadEvents: state.cacheReadEvents,
+            loadedToolResultChars: state.maxLoadedToolResultChars > 0 ? state.maxLoadedToolResultChars : nil,
+            loadedToolResultToolName: state.maxLoadedToolResultChars > 0 ? state.maxLoadedToolResultToolName : nil,
             cost: nil
         )
     }

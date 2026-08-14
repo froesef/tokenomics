@@ -27,26 +27,26 @@ final class CompositeTerminalController: TerminalController {
     /// Overrides the protocol's single-backend default to name whichever backend actually has this
     /// directory open — this is what lets the info panel say "Ghostty" or "iTerm2" instead of "Terminal".
     func terminalName(for workingDirectory: String) -> String? {
-        matchingController(for: workingDirectory)?.displayName
+        matchingController(for: workingDirectory, aiTitle: nil)?.displayName
     }
 
     func timeSinceLastActive(workingDirectory: String) -> TimeInterval? {
         controllers.compactMap { $0.timeSinceLastActive(workingDirectory: workingDirectory) }.min()
     }
 
-    func focusTab(workingDirectory: String, aiTitle: String?) async throws {
-        guard let controller = backend(for: workingDirectory) else { throw TerminalControllerError.unavailable }
-        try await controller.focusTab(workingDirectory: workingDirectory, aiTitle: aiTitle)
+    func focusTab(sessionId: String, workingDirectory: String, aiTitle: String?) async throws {
+        guard let controller = backend(for: workingDirectory, aiTitle: aiTitle) else { throw TerminalControllerError.unavailable }
+        try await controller.focusTab(sessionId: sessionId, workingDirectory: workingDirectory, aiTitle: aiTitle)
     }
 
-    func pasteText(_ text: String, workingDirectory: String, aiTitle: String?, activate: Bool) async throws {
-        guard let controller = backend(for: workingDirectory) else { throw TerminalControllerError.unavailable }
-        try await controller.pasteText(text, workingDirectory: workingDirectory, aiTitle: aiTitle, activate: activate)
+    func pasteText(_ text: String, sessionId: String, workingDirectory: String, aiTitle: String?, activate: Bool) async throws {
+        guard let controller = backend(for: workingDirectory, aiTitle: aiTitle) else { throw TerminalControllerError.unavailable }
+        try await controller.pasteText(text, sessionId: sessionId, workingDirectory: workingDirectory, aiTitle: aiTitle, activate: activate)
     }
 
-    func pasteTextAndSubmit(_ text: String, workingDirectory: String, aiTitle: String?) async throws {
-        guard let controller = backend(for: workingDirectory) else { throw TerminalControllerError.unavailable }
-        try await controller.pasteTextAndSubmit(text, workingDirectory: workingDirectory, aiTitle: aiTitle)
+    func pasteTextAndSubmit(_ text: String, sessionId: String, workingDirectory: String, aiTitle: String?) async throws {
+        guard let controller = backend(for: workingDirectory, aiTitle: aiTitle) else { throw TerminalControllerError.unavailable }
+        try await controller.pasteTextAndSubmit(text, sessionId: sessionId, workingDirectory: workingDirectory, aiTitle: aiTitle)
     }
 
     func refreshAvailability() async {
@@ -56,15 +56,20 @@ final class CompositeTerminalController: TerminalController {
     }
 
     /// Exact matches always outrank fuzzy (ancestor/descendant) ones, regardless of `controllers` order —
-    /// see the doc comment on `TerminalController.hasExactOpenTab` for the bug this tiering fixes.
-    private func matchingController(for workingDirectory: String) -> TerminalController? {
-        controllers.first { $0.isAvailable && $0.hasExactOpenTab(workingDirectory: workingDirectory) }
+    /// see the doc comment on `TerminalController.hasExactOpenTab` for the bug this tiering fixes. Within
+    /// the exact-match tier, `hasPlausibleExactOpenTab` (title-aware) is tried before the blind
+    /// `hasExactOpenTab` — see `TerminalController.hasPlausibleExactOpenTab`'s doc comment for the
+    /// cross-app forwarding bug that tiering fixes (a stray same-cwd tab in the first-listed backend always
+    /// won over the real match in a different app).
+    private func matchingController(for workingDirectory: String, aiTitle: String?) -> TerminalController? {
+        controllers.first { $0.isAvailable && $0.hasPlausibleExactOpenTab(workingDirectory: workingDirectory, aiTitle: aiTitle) }
+            ?? controllers.first { $0.isAvailable && $0.hasExactOpenTab(workingDirectory: workingDirectory) }
             ?? controllers.first { $0.isAvailable && $0.hasOpenTab(workingDirectory: workingDirectory) }
     }
 
     /// Prefers whichever backend actually has the directory open; falls back to the first available
     /// backend so a session with no confirmed tab yet still gets a best-effort focus/paste attempt.
-    private func backend(for workingDirectory: String) -> TerminalController? {
-        matchingController(for: workingDirectory) ?? controllers.first { $0.isAvailable }
+    private func backend(for workingDirectory: String, aiTitle: String?) -> TerminalController? {
+        matchingController(for: workingDirectory, aiTitle: aiTitle) ?? controllers.first { $0.isAvailable }
     }
 }

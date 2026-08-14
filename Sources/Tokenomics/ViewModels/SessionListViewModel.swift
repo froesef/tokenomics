@@ -279,7 +279,7 @@ final class SessionListViewModel: ObservableObject {
         // MenuBarExtra's `.window` style reuses every time the dropdown reopens — closing it outright risks
         // it being released.
         hostWindow?.orderOut(nil)
-        try? await terminal.focusTab(workingDirectory: session.workingDirectory, aiTitle: session.aiTitle)
+        try? await terminal.focusTab(sessionId: session.id, workingDirectory: session.workingDirectory, aiTitle: session.aiTitle)
     }
 
     func openInCodex(_ session: Session) {
@@ -294,7 +294,7 @@ final class SessionListViewModel: ObservableObject {
     func pasteCommand(_ text: String, into session: Session, activate: Bool = true) async {
         guard session.agentKind == .claudeCode else { return }
         guard settings.terminalFocusEnabled, terminal.isAvailable else { return }
-        try? await terminal.pasteText(text, workingDirectory: session.workingDirectory, aiTitle: session.aiTitle, activate: activate)
+        try? await terminal.pasteText(text, sessionId: session.id, workingDirectory: session.workingDirectory, aiTitle: session.aiTitle, activate: activate)
     }
 
     /// "Ping" is a nop keep-alive: unlike /handoff (asks for a real summary) or /compact (does real work),
@@ -390,7 +390,7 @@ final class SessionListViewModel: ObservableObject {
         Task { [weak self] in
             guard let self else { return }
             do {
-                try await self.terminal.pasteTextAndSubmit(Self.autoKeepAlivePrompt, workingDirectory: session.workingDirectory, aiTitle: session.aiTitle)
+                try await self.terminal.pasteTextAndSubmit(Self.autoKeepAlivePrompt, sessionId: session.id, workingDirectory: session.workingDirectory, aiTitle: session.aiTitle)
                 self.keepAlive.recordFireSucceeded(for: session.id)
                 FileHandle.standardError.write(
                     "[Tokenomics] keep-alive: succeeded for \(session.projectName)\n".data(using: .utf8)!

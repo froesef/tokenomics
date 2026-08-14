@@ -74,7 +74,9 @@ struct Session: Identifiable, Equatable, Sendable {
     let workingDirectory: String
     /// Claude Code's own AI-generated summary of what the session is doing (from the transcript's
     /// `ai-title` event) — the same short label it uses as the Ghostty tab title. Nil until Claude Code
-    /// has generated one, which usually happens after the first exchange.
+    /// has generated one, which usually happens after the first exchange. Overridden by a user's `/rename`
+    /// (a distinct `custom-title` event — see `TranscriptWatcher.loadSession`), which always wins over any
+    /// later auto-generated title.
     let aiTitle: String?
     let lastTurnTime: Date
     /// Timestamp of this session's most recent *assistant* turn (a response that carried `usage`), as
