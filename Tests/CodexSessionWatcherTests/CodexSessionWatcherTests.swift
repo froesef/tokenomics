@@ -1,27 +1,10 @@
 import Foundation
+import XCTest
+@testable import Tokenomics
 
-enum TestFailure: Error, CustomStringConvertible {
-    case assertion(String)
-
-    var description: String {
-        switch self {
-        case .assertion(let message): return message
-        }
-    }
-}
-
-@main
-struct CodexSessionWatcherTestRunner {
+final class CodexSessionWatcherTests: XCTestCase {
     @MainActor
-    static func main() throws {
-        try testLoadSessionParsesCodexTokenCounts()
-        try testScanAllDiscoversCodexSessionRollouts()
-        try testCodexAgentUsesChatGPTKnotIconStyle()
-        print("CodexSessionWatcherTests: 3 passed")
-    }
-
-    @MainActor
-    private static func testLoadSessionParsesCodexTokenCounts() throws {
+    func testLoadSessionParsesCodexTokenCounts() throws {
         let transcript = try makeTranscript(lines: [
             jsonLine([
                 "timestamp": "2026-08-12T10:00:00.000Z",
@@ -70,27 +53,28 @@ struct CodexSessionWatcherTestRunner {
         ])
 
         guard let session = CodexSessionWatcher().loadSession(from: transcript) else {
-            throw TestFailure.assertion("Expected Codex transcript to parse into a Session")
+            XCTFail("Expected Codex transcript to parse into a Session")
+            return
         }
 
-        try expect(session.agentKind == .codex, "agentKind")
-        try expect(session.id == "thr_123", "id")
-        try expect(session.workingDirectory == "/Users/me/project", "workingDirectory")
-        try expect(session.projectName == "project", "projectName")
-        try expect(session.model == "gpt-5.6-terra", "model")
-        try expect(session.effort == "high", "effort")
-        try expect(session.version == "0.144.2", "version")
-        try expect(session.totalInputTokens == 1_000, "totalInputTokens")
-        try expect(session.cachedInputTokens == 750, "cachedInputTokens")
-        try expect(session.outputTokens == 120, "outputTokens")
-        try expect(session.reasoningOutputTokens == 40, "reasoningOutputTokens")
-        try expect(abs((session.cacheHitRatio ?? 0) - 0.75) < 0.001, "cacheHitRatio")
-        try expect(session.supportsCacheCountdown == false, "supportsCacheCountdown")
-        try expect(session.detectedTTL == nil, "detectedTTL")
+        XCTAssertEqual(session.agentKind, .codex)
+        XCTAssertEqual(session.id, "thr_123")
+        XCTAssertEqual(session.workingDirectory, "/Users/me/project")
+        XCTAssertEqual(session.projectName, "project")
+        XCTAssertEqual(session.model, "gpt-5.6-terra")
+        XCTAssertEqual(session.effort, "high")
+        XCTAssertEqual(session.version, "0.144.2")
+        XCTAssertEqual(session.totalInputTokens, 1_000)
+        XCTAssertEqual(session.cachedInputTokens, 750)
+        XCTAssertEqual(session.outputTokens, 120)
+        XCTAssertEqual(session.reasoningOutputTokens, 40)
+        XCTAssertEqual(session.cacheHitRatio ?? 0, 0.75, accuracy: 0.001)
+        XCTAssertFalse(session.supportsCacheCountdown)
+        XCTAssertNil(session.detectedTTL)
     }
 
     @MainActor
-    private static func testScanAllDiscoversCodexSessionRollouts() throws {
+    func testScanAllDiscoversCodexSessionRollouts() throws {
         let codexHome = try temporaryDirectory()
         let sessions = codexHome.appendingPathComponent("sessions/2026/08/12", isDirectory: true)
         try FileManager.default.createDirectory(at: sessions, withIntermediateDirectories: true)
@@ -124,38 +108,32 @@ struct CodexSessionWatcherTestRunner {
 
         let scanned = CodexSessionWatcher(codexHome: codexHome).scanAll()
 
-        try expect(scanned.map(\.id) == ["thr_abc"], "scanAll ids")
-        try expect(scanned.first?.agentKind == .codex, "scanAll agentKind")
-        try expect(abs((scanned.first?.cacheHitRatio ?? 0) - 0.25) < 0.001, "scanAll cacheHitRatio")
+        XCTAssertEqual(scanned.map(\.id), ["thr_abc"])
+        XCTAssertEqual(scanned.first?.agentKind, .codex)
+        XCTAssertEqual(scanned.first?.cacheHitRatio ?? 0, 0.25, accuracy: 0.001)
     }
 
     @MainActor
-    private static func testCodexAgentUsesChatGPTKnotIconStyle() throws {
-        try expect(AgentKind.codex.iconStyle == .chatGPTKnot, "Codex icon style")
+    func testCodexAgentUsesChatGPTKnotIconStyle() {
+        XCTAssertEqual(AgentKind.codex.iconStyle, .chatGPTKnot)
     }
 
-    private static func makeTranscript(lines: [String]) throws -> URL {
+    private func makeTranscript(lines: [String]) throws -> URL {
         let dir = try temporaryDirectory()
         let url = dir.appendingPathComponent("rollout-test.jsonl")
         try lines.joined(separator: "\n").write(to: url, atomically: true, encoding: .utf8)
         return url
     }
 
-    private static func temporaryDirectory() throws -> URL {
+    private func temporaryDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }
 
-    private static func jsonLine(_ object: [String: Any]) throws -> String {
+    private func jsonLine(_ object: [String: Any]) throws -> String {
         let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
         return String(decoding: data, as: UTF8.self)
-    }
-
-    private static func expect(_ condition: Bool, _ label: String) throws {
-        if !condition {
-            throw TestFailure.assertion("Expectation failed: \(label)")
-        }
     }
 }

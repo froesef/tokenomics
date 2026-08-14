@@ -1,0 +1,30 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build & publish app bundle
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Tokenomics.app
+        run: make app
+
+      - name: Zip app bundle
+        run: |
+          cd .build
+          zip -r "Tokenomics-${{ github.ref_name }}.zip" Tokenomics.app
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: .build/Tokenomics-${{ github.ref_name }}.zip
+          generate_release_notes: true

@@ -8,6 +8,11 @@ let package = Package(
         .executableTarget(
             name: "Tokenomics",
             path: "Sources/Tokenomics"
+        ),
+        .testTarget(
+            name: "CodexSessionWatcherTests",
+            dependencies: ["Tokenomics"],
+            path: "Tests/CodexSessionWatcherTests"
         )
     ]
 )
