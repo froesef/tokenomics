@@ -7,11 +7,13 @@ import SwiftUI
 /// styling (colored status dots, custom fonts) doesn't have to be given up.
 ///
 /// `MenuBarExtra`'s `.window` style exposes no per-row screen coordinates, so this positions itself
-/// against the dropdown window's screen frame (via WindowAccessor) at the right edge, vertically centered
-/// on the current mouse position — an approximation of "beside the hovered row" that holds up because the
-/// mouse is necessarily over that row's vertical span when the hover fires. Overlaps the dropdown's edge
-/// by a couple points rather than leaving a gap, matching how native macOS submenus sit flush (very
-/// slightly overlapping) against the item they flew out from instead of floating apart from it.
+/// against the dropdown window's screen frame (via WindowAccessor) at the right edge, top-aligned with
+/// the dropdown (i.e. flush under the menu bar, like the dropdown itself) rather than centered on the
+/// hovered row — the panel is taller than most rows, so row-centering pushed it above the screen top for
+/// rows near the top of the list. Overlaps the dropdown's edge by a couple points rather than leaving a
+/// gap, matching how native macOS submenus sit flush (very slightly overlapping) against the item they
+/// flew out from instead of floating apart from it. Falls back to the left edge when the right side would
+/// run off the anchor's screen, and clamps its bottom to the screen when taller than it.
 @MainActor
 final class DetailPanelPresenter {
     private var window: NSWindow?
@@ -50,13 +52,15 @@ final class DetailPanelPresenter {
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary]
 
         let anchorFrame = anchorWindow?.frame ?? NSScreen.main?.frame ?? .zero
-        let mouseY = NSEvent.mouseLocation.y
-        let minY = anchorFrame.minY
-        let maxY = max(minY, anchorFrame.maxY - size.height)
-        let origin = NSPoint(
-            x: anchorFrame.maxX - 2,
-            y: min(max(mouseY - size.height / 2, minY), maxY)
-        )
+        let screen = anchorWindow?.screen ?? NSScreen.main
+        let screenFrame = screen?.visibleFrame ?? anchorFrame
+        let fitsOnRight = anchorFrame.maxX - 2 + size.width <= screenFrame.maxX
+        let x = fitsOnRight
+            ? anchorFrame.maxX - 2
+            : max(screenFrame.minX, anchorFrame.minX + 2 - size.width)
+        let topY = min(anchorFrame.maxY, screenFrame.maxY)
+        let y = max(screenFrame.minY, topY - size.height)
+        let origin = NSPoint(x: x, y: y)
         panel.setFrameOrigin(origin)
         panel.orderFrontRegardless()
         window = panel
