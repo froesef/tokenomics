@@ -281,11 +281,13 @@ final class SessionListViewModel: ObservableObject {
     }
 
     /// Pastes (never executes — see GhosttyController) a command like `/handoff` or `/compact` into the
-    /// session's terminal and focuses it, so the user reviews and runs it themselves.
-    func pasteCommand(_ text: String, into session: Session) async {
+    /// session's terminal and focuses it, so the user reviews and runs it themselves. `activate` defaults
+    /// to true for these explicit paste actions; `ping` below calls through with `activate: false` since
+    /// it's meant to stay quiet.
+    func pasteCommand(_ text: String, into session: Session, activate: Bool = true) async {
         guard session.agentKind == .claudeCode else { return }
         guard settings.ghosttyFocusEnabled, ghostty.isAvailable else { return }
-        try? await ghostty.pasteText(text, workingDirectory: session.workingDirectory, aiTitle: session.aiTitle)
+        try? await ghostty.pasteText(text, workingDirectory: session.workingDirectory, aiTitle: session.aiTitle, activate: activate)
     }
 
     /// "Ping" is a nop keep-alive: unlike /handoff (asks for a real summary) or /compact (does real work),
@@ -293,8 +295,11 @@ final class SessionListViewModel: ObservableObject {
     /// doing anything — for when all you want is to push the TTL back out, not actually continue the task.
     static let pingPrompt = "Are you still there? Answer yes/no."
 
+    /// Unlike /handoff and /compact (explicit, deliberate actions the user expects to watch land), Ping is
+    /// meant to be a quick "still there?" nudge fired from wherever the user currently is — it should never
+    /// yank Ghostty to the front of their screen.
     func ping(_ session: Session) async {
-        await pasteCommand(Self.pingPrompt, into: session)
+        await pasteCommand(Self.pingPrompt, into: session, activate: false)
     }
 
     // MARK: - Automatic keep-alive
