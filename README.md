@@ -128,6 +128,8 @@ it from Terminal to see it directly:
   reliable signal to bind a session to its exact pane when working-directory/title information is
   ambiguous or not yet generated. See `Sources/Tokenomics/Services/GhosttyController.swift`,
   `ITermController.swift`, and `CompositeTerminalController.swift` for the current (partial) mitigations.
+- **Ghostty splits may not work with auto keep-alive.** Keep-alive targets a tab; a session living in a
+  split pane inside that tab may not get correctly detected/targeted, so keep-alive can silently miss it.
 
 ## Documentation
 
