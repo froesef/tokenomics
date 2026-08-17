@@ -4,6 +4,11 @@
 [![License](https://img.shields.io/github/license/froesef/tokenomics)](LICENSE)
 [![Latest release](https://img.shields.io/github/v/release/froesef/tokenomics)](https://github.com/froesef/tokenomics/releases/latest)
 
+> **⚠️ Auto Keep-Alive: API-key/Bedrock billing only.** The Auto Keep-Alive feature pastes a "still there?"
+> prompt into your terminal before a session's cache would go cold. On **Pro/Max subscription plans**,
+> usage is capped by request count, not tokens — every keep-alive ping still burns your 5-hour quota for
+> zero savings. **Leave it off if you're on a subscription plan.**
+
 A macOS menu bar app that shows local coding-agent sessions: [Claude Code](https://code.claude.com)
 prompt-cache countdowns, costs, and cache-hit ratios, plus Codex cached-input token usage from local
 session rollouts.

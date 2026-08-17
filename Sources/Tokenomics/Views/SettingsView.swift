@@ -82,6 +82,15 @@ struct SettingsView: View {
             }
 
             Section("Auto Keep-Alive (Experimental)") {
+                Label {
+                    Text("Only use this on API-key or Bedrock billing. On Pro/Max subscription plans, usage is capped by request count, not tokens — every keep-alive ping still burns your 5-hour quota for zero savings. Leave this off if you're on a subscription plan.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                }
+
                 Toggle(isOn: $settings.keepAliveAllActiveSessions) {
                     SettingLabel(
                         title: "Keep every active session alive",
