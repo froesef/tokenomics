@@ -30,6 +30,12 @@ private struct KeepAliveState {
     /// the next rescan, which is exactly the bug reported directly (screenshot showing a session the user
     /// had just turned off still reading "on" moments later).
     var setByUser = false
+    /// True once the user has clicked "Let Expire" on an expiry banner for this session — beyond the
+    /// ordinary manual toggle-off (`setByUser`), this also suppresses further expiry banners/notifications
+    /// for the session, since the user has explicitly said they don't want to hear about this one going
+    /// cold. Cleared the moment real user activity is observed again (see `observeTurn`), since that means
+    /// they're back and the "just let it go" choice no longer applies to whatever comes next.
+    var expireRequested = false
 }
 
 /// Drives the "unattended keep-alive" feature: requested directly for when the user is away (a meeting,
@@ -63,6 +69,20 @@ final class KeepAliveTracker {
 
     func setEnabled(_ enabled: Bool, for session: Session) {
         apply(enabled, for: session, setByUser: true)
+    }
+
+    /// "Let Expire", clicked from an expiry banner: turns keep-alive off for good (like a manual
+    /// toggle-off, so `autoEnableIfNeeded` never turns it back on) and additionally suppresses further
+    /// expiry banners/notifications for this session — see `isExpireRequested`.
+    func requestExpire(for session: Session) {
+        apply(false, for: session, setByUser: true)
+        states[session.id]?.expireRequested = true
+    }
+
+    /// Whether the user has asked to stop hearing about this session going cold — gates both the
+    /// expiring-soon banner/notification and the max-extensions banner in `SessionListViewModel`.
+    func isExpireRequested(for session: Session) -> Bool {
+        states[session.id]?.expireRequested ?? false
     }
 
     /// Used only by `SessionListViewModel.enableKeepAliveForActiveSessions` (the
@@ -135,6 +155,7 @@ final class KeepAliveTracker {
             // longer holds and the budget resets.
             state.pingsUsed = 0
             state.exhaustionWarned = false
+            state.expireRequested = false
             state.lastSeenTurnTime = session.lastTurnTime
         }
         states[session.id] = state

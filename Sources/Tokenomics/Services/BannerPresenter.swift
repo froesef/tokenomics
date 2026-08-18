@@ -18,14 +18,15 @@ final class BannerPresenter {
 
     func presentIfNeeded(
         session: Session, remaining: TimeInterval, keepWarmSummary: String?,
-        onSwitch: @escaping () -> Void, onHandoff: @escaping () -> Void, onPing: @escaping () -> Void
+        onSwitch: @escaping () -> Void, onHandoff: @escaping () -> Void, onPing: @escaping () -> Void,
+        onLetExpire: @escaping () -> Void
     ) {
         guard shownForTurn[session.id] != session.lastTurnTime else { return }
         shownForTurn[session.id] = session.lastTurnTime
         present(
             windowKey: session.id, session: session, remaining: remaining, kind: .expiringSoon,
             detailSummary: keepWarmSummary,
-            onSwitch: onSwitch, onHandoff: onHandoff, onPing: onPing
+            onSwitch: onSwitch, onHandoff: onHandoff, onPing: onPing, onLetExpire: onLetExpire
         )
     }
 
@@ -36,19 +37,21 @@ final class BannerPresenter {
     /// expiry banner so both can be on screen at once for the same session.
     func presentMaxExtensions(
         session: Session, remaining: TimeInterval, used: Int, cap: Int, coldCostSummary: String?,
-        onSwitch: @escaping () -> Void, onHandoff: @escaping () -> Void, onPing: @escaping () -> Void
+        onSwitch: @escaping () -> Void, onHandoff: @escaping () -> Void, onPing: @escaping () -> Void,
+        onLetExpire: @escaping () -> Void
     ) {
         present(
             windowKey: session.id + ":maxext", session: session, remaining: remaining,
             kind: .maxExtensionsReached(used: used, cap: cap), detailSummary: coldCostSummary,
-            onSwitch: onSwitch, onHandoff: onHandoff, onPing: onPing
+            onSwitch: onSwitch, onHandoff: onHandoff, onPing: onPing, onLetExpire: onLetExpire
         )
     }
 
     private func present(
         windowKey: String, session: Session, remaining: TimeInterval, kind: BannerKind,
         detailSummary: String?,
-        onSwitch: @escaping () -> Void, onHandoff: @escaping () -> Void, onPing: @escaping () -> Void
+        onSwitch: @escaping () -> Void, onHandoff: @escaping () -> Void, onPing: @escaping () -> Void,
+        onLetExpire: @escaping () -> Void
     ) {
         dismiss(windowKey)
         let id = windowKey
@@ -67,6 +70,10 @@ final class BannerPresenter {
             },
             onPing: { [weak self] in
                 onPing()
+                self?.dismiss(id)
+            },
+            onLetExpire: { [weak self] in
+                onLetExpire()
                 self?.dismiss(id)
             },
             onDismiss: { [weak self] in self?.dismiss(id) }
@@ -134,6 +141,11 @@ private struct BannerView: View {
     let onSwitch: () -> Void
     let onHandoff: () -> Void
     let onPing: () -> Void
+    /// "Let Expire" — the user has decided this session doesn't need saving. Turns auto keep-alive off for
+    /// good (as if manually toggled off, so it won't get switched back on by the global "keep every active
+    /// session alive" setting) and stops any further expiry banners/notifications for it, until real
+    /// activity is seen on it again. See `KeepAliveTracker.requestExpire`.
+    let onLetExpire: () -> Void
     let onDismiss: () -> Void
 
     var body: some View {
@@ -164,6 +176,9 @@ private struct BannerView: View {
                     }
                 }
                 HStack {
+                    Button("Let Expire", action: onLetExpire)
+                        .controlSize(.small)
+                        .help("Turns off auto keep-alive for this session and stops warning about it going cold")
                     Spacer()
                     Button("Ping", action: onPing)
                         .controlSize(.small)

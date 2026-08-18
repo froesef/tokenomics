@@ -240,6 +240,7 @@ final class SessionListViewModel: ObservableObject {
         guard settings.notifyBeforeCold else { return }
         for session in sessions {
             guard session.supportsCacheCountdown else { continue }
+            guard !keepAlive.isExpireRequested(for: session) else { continue }
             let ttl = session.effectiveTTL(fallback: settings.ttl)
             let remaining = session.remaining(now: now, ttl: ttl)
             let leadTime = settings.notifyLeadTimeSeconds
@@ -250,7 +251,8 @@ final class SessionListViewModel: ObservableObject {
                     keepWarmSummary: Self.keepWarmSummary(for: session, ttl: ttl),
                     onSwitch: { [weak self] in Task { await self?.focus(session) } },
                     onHandoff: { [weak self] in Task { await self?.pasteCommand("/handoff", into: session) } },
-                    onPing: { [weak self] in Task { await self?.ping(session) } }
+                    onPing: { [weak self] in Task { await self?.ping(session) } },
+                    onLetExpire: { [weak self] in self?.letExpire(session) }
                 )
             }
         }
@@ -312,6 +314,13 @@ final class SessionListViewModel: ObservableObject {
         keepAlive.setEnabled(enabled, for: session)
     }
 
+    /// "Let Expire", clicked from an expiry banner: this session doesn't need saving — turn auto
+    /// keep-alive off for good and stop warning about it going cold. Scoped to this one session/tab only
+    /// (see `KeepAliveTracker.requestExpire`).
+    func letExpire(_ session: Session) {
+        keepAlive.requestExpire(for: session)
+    }
+
     /// When `settings.keepAliveAllActiveSessions` is on, switches Auto Keep-Alive on for every session
     /// that still has time left on its cache and hasn't been touched yet — both right now (see the
     /// `sink` in `init`) and for any session that becomes active later (called from every `rescan()`).
@@ -355,6 +364,9 @@ final class SessionListViewModel: ObservableObject {
             let ttl = session.effectiveTTL(fallback: settings.ttl)
             let remaining = session.remaining(now: now, ttl: ttl)
             guard remaining > 0 else { continue }
+            // No `isExpireRequested` guard needed here: `requestExpire` disables keep-alive, and
+            // `consumeExhaustionWarning` already requires it enabled, so an expired-by-choice session can
+            // never reach this warning.
             guard keepAlive.consumeExhaustionWarning(for: session, settings: settings) else { continue }
             let info = keepAlive.info(for: session, settings: settings)
             banners.presentMaxExtensions(
@@ -362,7 +374,8 @@ final class SessionListViewModel: ObservableObject {
                 coldCostSummary: Self.coldCostSummary(for: session, ttl: ttl),
                 onSwitch: { [weak self] in Task { await self?.focus(session) } },
                 onHandoff: { [weak self] in Task { await self?.pasteCommand("/handoff", into: session) } },
-                onPing: { [weak self] in Task { await self?.ping(session) } }
+                onPing: { [weak self] in Task { await self?.ping(session) } },
+                onLetExpire: { [weak self] in self?.letExpire(session) }
             )
         }
     }
