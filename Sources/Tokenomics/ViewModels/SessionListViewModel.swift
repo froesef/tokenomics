@@ -86,6 +86,16 @@ final class SessionListViewModel: ObservableObject {
             .sink { [weak self] _ in self?.enableKeepAliveForActiveSessions(now: Date()) }
             .store(in: &cancellables)
 
+        // Not torn down in `deinit` — like `watcher`/`codexWatcher` above, this view model lives for the
+        // whole process, so there's nothing that ever needs to unregister these.
+        let workspaceCenter = NSWorkspace.shared.notificationCenter
+        workspaceCenter.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.handleWillSleep() }
+        }
+        workspaceCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.handleDidWake() }
+        }
+
         startTicking()
         startPolling()
         Task { await rescan() }
@@ -94,6 +104,22 @@ final class SessionListViewModel: ObservableObject {
     deinit {
         tickTask?.cancel()
         pollTask?.cancel()
+    }
+
+    /// Right before the system sleeps: warn about whichever session needs attention soonest, since nothing
+    /// (countdown, keep-alive ping) can run again until the system wakes.
+    private func handleWillSleep() {
+        let trackedCount = sessions.filter(\.supportsCacheCountdown).count
+        KeepAliveFileLogger.log("system: will sleep, \(trackedCount) session(s) tracked")
+        notifications.notifySleepSummary(sessions: sessions, settings: settings)
+    }
+
+    /// Right after the system wakes: rescan immediately rather than waiting for the next scheduled poll, so
+    /// countdowns/keep-alive state reflect the real elapsed time (a session's cache may have already gone
+    /// cold during however long the system was asleep) without a stale delay.
+    private func handleDidWake() {
+        KeepAliveFileLogger.log("system: did wake")
+        Task { await rescan() }
     }
 
     // MARK: - Timers

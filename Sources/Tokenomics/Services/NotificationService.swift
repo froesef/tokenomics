@@ -34,4 +34,30 @@ final class NotificationService {
         let request = UNNotificationRequest(identifier: "cache-expiring-\(session.id)", content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request)
     }
+
+    /// Fired once, right before the system sleeps (see `SessionListViewModel`'s `NSWorkspace.willSleepNotification`
+    /// observer). While asleep the CPU is halted — no countdown tick or keep-alive ping can run — so this is
+    /// the user's one chance to see, before the Mac goes dark, which session will need attention soonest.
+    func notifySleepSummary(sessions: [Session], settings: SettingsStore) {
+        guard isSupported else { return }
+        let now = Date()
+        let warm = sessions
+            .filter(\.supportsCacheCountdown)
+            .map { ($0, $0.remaining(now: now, ttl: $0.effectiveTTL(fallback: settings.ttl))) }
+            .filter { $0.1 > 0 }
+            .sorted { $0.1 < $1.1 }
+        guard let (soonest, remaining) = warm.first else { return }
+
+        let content = UNMutableNotificationContent()
+        content.title = warm.count == 1 ? "Going to sleep — 1 active session" : "Going to sleep — \(warm.count) active sessions"
+        var body = "\(soonest.projectName) needs attention first — cache expires in \(Int(remaining))s."
+        if warm.count > 1 {
+            body += " \(warm.count - 1) more session(s) still warm."
+        }
+        content.body = body
+        content.sound = .default
+
+        let request = UNNotificationRequest(identifier: "sleep-summary-\(now.timeIntervalSince1970)", content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request)
+    }
 }
