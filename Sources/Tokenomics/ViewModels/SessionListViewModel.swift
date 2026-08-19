@@ -23,6 +23,12 @@ final class SessionListViewModel: ObservableObject {
 
     private let watcher: TranscriptWatcher
     private let codexWatcher: CodexSessionWatcher
+    private let hookWatcher = HookActivityWatcher()
+    /// Set when HookInstaller.install()/uninstall() throws (e.g. `~/.claude/settings.json` exists but isn't
+    /// valid JSON) — surfaced via `dependencyWarnings` like every other degraded-but-not-fatal condition.
+    /// Kept outside `rescan()`'s own warning list (which is rebuilt from scratch every call) since this can
+    /// be set from the settings sink, between rescans.
+    private var hookInstallWarning: String?
     private let usage = UsageService()
     private let rtk = RTKService()
     private let notifications = NotificationService()
@@ -77,6 +83,20 @@ final class SessionListViewModel: ObservableObject {
             Task { await self?.rescan() }
         }
         codexWatcher.startWatching()
+        hookWatcher.onChange = { [weak self] in
+            Task { await self?.rescan() }
+        }
+        hookWatcher.startWatching()
+
+        // Installs/removes the hook entries in ~/.claude/settings.json to match the setting (see
+        // HookInstaller) right when it's switched, and once more here at launch — a `@Published`
+        // subscription delivers its current value immediately, so this doubles as a self-healing check
+        // that re-installs a hooks-mode setup someone edited out of settings.json by hand between runs.
+        // `removeDuplicates` only stops a *second* run for the same value once the app is already up.
+        settings.$activitySource
+            .removeDuplicates()
+            .sink { [weak self] source in self?.applyActivitySource(source) }
+            .store(in: &cancellables)
 
         // Applied again on every `rescan()` too (so a session that later becomes active also picks it
         // up), but also here so switching the setting on takes effect right away rather than waiting for
@@ -151,12 +171,48 @@ final class SessionListViewModel: ObservableObject {
         checkKeepAliveExhaustion()
     }
 
+    // MARK: - Activity source (JSONL heuristic vs. hooks)
+
+    /// Installs or removes the hook entries in `~/.claude/settings.json` to match the setting. Errors
+    /// (e.g. a malformed settings file) are surfaced via `dependencyWarnings`, never thrown further — this
+    /// runs from a Combine sink with nothing to catch it, and a failed install shouldn't crash the app any
+    /// more than a missing `ccusage` does.
+    private func applyActivitySource(_ source: ActivitySource) {
+        do {
+            switch source {
+            case .hooks: try HookInstaller.install()
+            case .jsonl: try HookInstaller.uninstall()
+            }
+            hookInstallWarning = nil
+        } catch {
+            hookInstallWarning = "Couldn't update Claude Code hooks: \(error.localizedDescription)"
+        }
+        Task { await rescan() }
+    }
+
+    /// Overlays HookActivityWatcher's activity on top of the JSONL-inferred one for every Claude Code
+    /// session it has data for, when hooks mode is selected. A session with no hook events yet (e.g. it
+    /// hasn't had a turn since `install()` ran) keeps its transcript-inferred activity — see
+    /// `ActivitySource.hooks`'s doc comment. Cost/cache/token fields are never touched here: hooks carry
+    /// none of that data (confirmed against the hooks reference), so the transcript stays their only source
+    /// regardless of this setting.
+    private func applyHookActivityOverlay(to sessions: inout [Session]) {
+        guard settings.activitySource == .hooks else { return }
+        let hookStates = hookWatcher.scanAll()
+        for i in sessions.indices {
+            guard sessions[i].agentKind == .claudeCode, let state = hookStates[sessions[i].id] else { continue }
+            sessions[i].activity = state.activity
+            sessions[i].compactionStartedAt = state.compactionStartedAt
+        }
+    }
+
     // MARK: - Rescan (file watch / 15s timer)
 
     func rescan() async {
         let claudeScanned = watcher.scanAll()
         let codexScanned = codexWatcher.scanAll()
-        let scanned = claudeScanned + codexScanned
+        var scanned = claudeScanned + codexScanned
+        applyHookActivityOverlay(to: &scanned)
         await usage.refresh()
 
         var withCost = scanned
@@ -237,6 +293,9 @@ final class SessionListViewModel: ObservableObject {
         keepAlive.pruneStates(keeping: Set(scanned.map(\.id)))
 
         var warnings: [String] = []
+        if let hookInstallWarning {
+            warnings.append(hookInstallWarning)
+        }
         if await usage.isAvailable == false {
             warnings.append(await usage.unavailableReason ?? "ccusage unavailable")
         }
