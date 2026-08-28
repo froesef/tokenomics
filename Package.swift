@@ -10,9 +10,9 @@ let package = Package(
             path: "Sources/Tokenomics"
         ),
         .testTarget(
-            name: "CodexSessionWatcherTests",
+            name: "TokenomicsTests",
             dependencies: ["Tokenomics"],
-            path: "Tests/CodexSessionWatcherTests"
+            path: "Tests/TokenomicsTests"
         )
     ]
 )

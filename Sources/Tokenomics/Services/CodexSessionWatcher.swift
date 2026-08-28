@@ -1,5 +1,4 @@
 import Foundation
-import CoreServices
 
 /// Discovers and parses local Codex session rollouts under `~/.codex`. Read-only by design: this never
 /// writes to Codex transcripts or metadata, and it never opens `auth.json`.
@@ -10,7 +9,7 @@ final class CodexSessionWatcher {
     private let recencyWindow: TimeInterval = 24 * 3600
 
     private let codexHome: URL
-    private var fsEventStream: FSEventStreamRef?
+    private var fsWatcher: FSEventsWatcher?
 
     var onChange: (@MainActor () -> Void)?
 
@@ -21,35 +20,12 @@ final class CodexSessionWatcher {
     // MARK: - Discovery + parsing
 
     func discoverTranscripts(maxDepth: Int = 6) -> [URL] {
-        let fm = FileManager.default
-        var results: [URL] = []
-
-        func walk(_ dir: URL, depth: Int) {
-            guard depth <= maxDepth,
-                  let entries = try? fm.contentsOfDirectory(
-                    at: dir, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]
-                  ) else { return }
-            for entry in entries {
-                let isDirectory = (try? entry.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
-                if isDirectory {
-                    walk(entry, depth: depth + 1)
-                } else if entry.pathExtension == "jsonl" && looksLikeCodexTranscript(entry) {
-                    results.append(entry)
+        TranscriptDiscovery.findJSONLFiles(under: codexHome, maxDepth: maxDepth) { url in
+            !url.lastPathComponent.contains("auth")
+                && TranscriptDiscovery.headContains(url) {
+                    $0.contains("\"session_meta\"") || $0.contains("\"token_count\"")
                 }
-            }
         }
-
-        walk(codexHome, depth: 0)
-        return results
-    }
-
-    private func looksLikeCodexTranscript(_ url: URL) -> Bool {
-        guard !url.lastPathComponent.contains("auth"),
-              let handle = try? FileHandle(forReadingFrom: url) else { return false }
-        defer { try? handle.close() }
-        guard let head = try? handle.read(upToCount: 4096),
-              let text = String(data: head, encoding: .utf8) else { return false }
-        return text.contains("\"session_meta\"") || text.contains("\"token_count\"")
     }
 
     /// Parses one Codex JSONL rollout. The local format differs from Claude Code's transcript shape:
@@ -142,12 +118,7 @@ final class CodexSessionWatcher {
     }
 
     func scanAll() -> [Session] {
-        let cutoff = Date().addingTimeInterval(-recencyWindow)
-        return discoverTranscripts().compactMap { url -> Session? in
-            let mtime = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
-            guard (mtime ?? .distantPast) >= cutoff else { return nil }
-            return loadSession(from: url)
-        }
+        TranscriptDiscovery.scanRecent(discover: { self.discoverTranscripts() }, recencyWindow: recencyWindow, load: loadSession)
     }
 
     private func parseEventPayload(
@@ -176,17 +147,11 @@ final class CodexSessionWatcher {
         guard let payload,
               payload["type"] as? String == "function_call",
               let name = payload["name"] as? String else { return }
-        if name.hasPrefix("mcp__"), let server = mcpServerName(from: name) {
+        if name.hasPrefix("mcp__"), let server = TranscriptDiscovery.mcpServerName(from: name) {
             usage.mcpServers.insert(server)
         } else {
             usage.builtInTools[name, default: 0] += 1
         }
-    }
-
-    private func mcpServerName(from toolName: String) -> String? {
-        let parts = toolName.components(separatedBy: "__")
-        guard parts.count >= 3, parts.first == "mcp" else { return nil }
-        return parts[1..<(parts.count - 1)].joined(separator: "__")
     }
 
     private func intValue(_ value: Any?) -> Int? {
@@ -217,33 +182,13 @@ final class CodexSessionWatcher {
     // MARK: - FSEvents
 
     func startWatching() {
-        stopWatching()
-        var context = FSEventStreamContext(
-            version: 0,
-            info: Unmanaged.passUnretained(self).toOpaque(),
-            retain: nil, release: nil, copyDescription: nil
-        )
-        let pathsToWatch = [codexHome.path] as CFArray
-        let callback: FSEventStreamCallback = { _, clientCallBackInfo, _, _, _, _ in
-            guard let info = clientCallBackInfo else { return }
-            let watcher = Unmanaged<CodexSessionWatcher>.fromOpaque(info).takeUnretainedValue()
-            Task { @MainActor in watcher.onChange?() }
-        }
-        guard let stream = FSEventStreamCreate(
-            kCFAllocatorDefault, callback, &context, pathsToWatch,
-            FSEventStreamEventId(kFSEventStreamEventIdSinceNow), 1.0,
-            FSEventStreamCreateFlags(kFSEventStreamCreateFlagUseCFTypes | kFSEventStreamCreateFlagFileEvents)
-        ) else { return }
-        fsEventStream = stream
-        FSEventStreamSetDispatchQueue(stream, DispatchQueue.main)
-        FSEventStreamStart(stream)
+        let watcher = FSEventsWatcher(path: codexHome.path) { [weak self] in self?.onChange?() }
+        fsWatcher = watcher
+        watcher.start()
     }
 
     func stopWatching() {
-        guard let stream = fsEventStream else { return }
-        FSEventStreamStop(stream)
-        FSEventStreamInvalidate(stream)
-        FSEventStreamRelease(stream)
-        fsEventStream = nil
+        fsWatcher?.stop()
+        fsWatcher = nil
     }
 }
