@@ -95,10 +95,8 @@ final class HookActivityWatcherTests: XCTestCase {
     // MARK: - Helpers
 
     private func hookLine(session: String, event: String, ts: Int = 1_700_000_000) -> String {
-        let payload: [String: Any] = ["session_id": session, "hook_event_name": event, "cwd": "/tmp/project"]
-        let payloadData = try! JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
-        let payloadString = String(decoding: payloadData, as: UTF8.self)
-        return "{\"tokenomics_ts\":\(ts),\"payload\":\(payloadString)}"
+        let payload = "{\"cwd\":\"/tmp/project\",\"hook_event_name\":\"\(event)\",\"session_id\":\"\(session)\"}"
+        return "{\"tokenomics_ts\":\(ts),\"payload\":\(payload)}"
     }
 
     private func makeLog(lines: [String]) throws -> URL {
