@@ -256,7 +256,7 @@ final class SessionListViewModel: ObservableObject {
         // No console/UI elsewhere surfaces this for a menu-bar-only app — run the built .app from
         // Terminal (see README "Debugging") to see per-scan session counts and warnings.
         FileHandle.standardError.write(
-            "[Tokenomics] scan: \(sessions.count) session(s), warnings: \(warnings)\n".data(using: .utf8)!
+            "[Tokenomics] scan: \(sessions.count) session(s), warnings: \(warnings)\n".data(using: .utf8) ?? Data()
         )
     }
 
@@ -414,7 +414,7 @@ final class SessionListViewModel: ObservableObject {
         // attached to a console) and to a persistent file (see KeepAliveFileLogger) so a fire that
         // misfires — e.g. the known Ghostty-splits detection bug — can be diagnosed after the fact.
         let firingMessage = "keep-alive: firing for \(session.projectName) (\(Int(remaining))s left)"
-        FileHandle.standardError.write("[Tokenomics] \(firingMessage)\n".data(using: .utf8)!)
+        FileHandle.standardError.write("[Tokenomics] \(firingMessage)\n".data(using: .utf8) ?? Data())
         KeepAliveFileLogger.log(firingMessage)
         Task { [weak self] in
             guard let self else { return }
@@ -422,12 +422,12 @@ final class SessionListViewModel: ObservableObject {
                 try await self.terminal.pasteTextAndSubmit(Self.autoKeepAlivePrompt, sessionId: session.id, workingDirectory: session.workingDirectory, aiTitle: session.aiTitle)
                 self.keepAlive.recordFireSucceeded(for: session.id)
                 let succeededMessage = "keep-alive: succeeded for \(session.projectName)"
-                FileHandle.standardError.write("[Tokenomics] \(succeededMessage)\n".data(using: .utf8)!)
+                FileHandle.standardError.write("[Tokenomics] \(succeededMessage)\n".data(using: .utf8) ?? Data())
                 KeepAliveFileLogger.log(succeededMessage)
             } catch {
                 self.keepAlive.recordFireFailed(for: session.id)
                 let failedMessage = "keep-alive: failed for \(session.projectName): \(error)"
-                FileHandle.standardError.write("[Tokenomics] \(failedMessage)\n".data(using: .utf8)!)
+                FileHandle.standardError.write("[Tokenomics] \(failedMessage)\n".data(using: .utf8) ?? Data())
                 KeepAliveFileLogger.log(failedMessage)
             }
         }

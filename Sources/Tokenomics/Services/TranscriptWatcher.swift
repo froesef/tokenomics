@@ -1,5 +1,4 @@
 import Foundation
-import CoreServices
 
 /// Discovers and parses Claude Code session transcripts under `~/.claude`, and watches that tree for
 /// changes via FSEvents. Read-only: never writes, locks, or truncates a transcript file (spec.md §0, §10.8).
@@ -20,7 +19,7 @@ final class TranscriptWatcher {
     private let recencyWindow: TimeInterval = 24 * 3600
 
     private let claudeHome: URL
-    private var fsEventStream: FSEventStreamRef?
+    private var fsWatcher: FSEventsWatcher?
 
     /// Called (on the main actor) whenever FSEvents observes a change under ~/.claude.
     var onChange: (@MainActor () -> Void)?
@@ -32,33 +31,9 @@ final class TranscriptWatcher {
     // MARK: - Discovery + parsing
 
     func discoverTranscripts(maxDepth: Int = 4) -> [URL] {
-        let fm = FileManager.default
-        var results: [URL] = []
-
-        func walk(_ dir: URL, depth: Int) {
-            guard depth <= maxDepth,
-                  let entries = try? fm.contentsOfDirectory(
-                    at: dir, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]
-                  ) else { return }
-            for entry in entries {
-                let isDirectory = (try? entry.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
-                if isDirectory {
-                    walk(entry, depth: depth + 1)
-                } else if entry.pathExtension == "jsonl" && looksLikeTranscript(entry) {
-                    results.append(entry)
-                }
-            }
+        TranscriptDiscovery.findJSONLFiles(under: claudeHome, maxDepth: maxDepth) { url in
+            TranscriptDiscovery.headContains(url) { $0.contains("\"sessionId\"") }
         }
-        walk(claudeHome, depth: 0)
-        return results
-    }
-
-    private func looksLikeTranscript(_ url: URL) -> Bool {
-        guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
-        defer { try? handle.close() }
-        guard let head = try? handle.read(upToCount: 4096),
-              let text = String(data: head, encoding: .utf8) else { return false }
-        return text.contains("\"sessionId\"")
     }
 
     /// Every mutable signal accumulated while walking a transcript's lines in order — pulled out of
@@ -477,7 +452,7 @@ final class TranscriptWatcher {
         for block in content {
             guard block["type"] as? String == "tool_use", let name = block["name"] as? String else { continue }
             if name.hasPrefix("mcp__") {
-                if let server = mcpServerName(from: name) {
+                if let server = TranscriptDiscovery.mcpServerName(from: name) {
                     usage.mcpServers.insert(server)
                 }
             } else if name == "Skill" {
@@ -490,12 +465,6 @@ final class TranscriptWatcher {
         }
     }
 
-    private static func mcpServerName(from toolName: String) -> String? {
-        let parts = toolName.components(separatedBy: "__")
-        guard parts.count >= 3, parts.first == "mcp" else { return nil }
-        return parts[1..<(parts.count - 1)].joined(separator: "__")
-    }
-
     /// Deliberately does NOT collapse/dedupe sessions that share a working directory. An earlier version
     /// of this did (keeping only the most-recently-active session per directory), reasoning that a
     /// second same-directory session was probably a stale leftover. Verified against real `ps`/`lsof`
@@ -503,45 +472,19 @@ final class TranscriptWatcher {
     /// terminal tabs both cd'd into the same repo) — collapsing would have hidden a real running session.
     /// See ProcessMatcher/Session.livePIDs for the honest way to answer "is this one actually live".
     func scanAll() -> [Session] {
-        let cutoff = Date().addingTimeInterval(-recencyWindow)
-        return discoverTranscripts().compactMap { url -> Session? in
-            // Cheap mtime check before paying for a full read + line-by-line JSON parse.
-            let mtime = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
-            guard (mtime ?? .distantPast) >= cutoff else { return nil }
-            return loadSession(from: url)
-        }
+        TranscriptDiscovery.scanRecent(discover: { self.discoverTranscripts() }, recencyWindow: recencyWindow, load: loadSession)
     }
 
     // MARK: - FSEvents
 
     func startWatching() {
-        stopWatching()
-        var context = FSEventStreamContext(
-            version: 0,
-            info: Unmanaged.passUnretained(self).toOpaque(),
-            retain: nil, release: nil, copyDescription: nil
-        )
-        let pathsToWatch = [claudeHome.path] as CFArray
-        let callback: FSEventStreamCallback = { _, clientCallBackInfo, _, _, _, _ in
-            guard let info = clientCallBackInfo else { return }
-            let watcher = Unmanaged<TranscriptWatcher>.fromOpaque(info).takeUnretainedValue()
-            Task { @MainActor in watcher.onChange?() }
-        }
-        guard let stream = FSEventStreamCreate(
-            kCFAllocatorDefault, callback, &context, pathsToWatch,
-            FSEventStreamEventId(kFSEventStreamEventIdSinceNow), 1.0,
-            FSEventStreamCreateFlags(kFSEventStreamCreateFlagUseCFTypes | kFSEventStreamCreateFlagFileEvents)
-        ) else { return }
-        fsEventStream = stream
-        FSEventStreamSetDispatchQueue(stream, DispatchQueue.main)
-        FSEventStreamStart(stream)
+        let watcher = FSEventsWatcher(path: claudeHome.path) { [weak self] in self?.onChange?() }
+        fsWatcher = watcher
+        watcher.start()
     }
 
     func stopWatching() {
-        guard let stream = fsEventStream else { return }
-        FSEventStreamStop(stream)
-        FSEventStreamInvalidate(stream)
-        FSEventStreamRelease(stream)
-        fsEventStream = nil
+        fsWatcher?.stop()
+        fsWatcher = nil
     }
 }
