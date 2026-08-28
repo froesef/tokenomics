@@ -76,7 +76,7 @@ struct SettingsView: View {
                 Toggle(isOn: $settings.terminalFocusEnabled) {
                     SettingLabel(
                         title: "Enable terminal focus action",
-                        description: "Let notifications focus the originating session's terminal window (Ghostty or iTerm2)."
+                        description: "Let notifications focus the originating session's terminal window (Ghostty, iTerm2, or cmux)."
                     )
                 }
             }

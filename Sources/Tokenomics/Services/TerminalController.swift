@@ -1,13 +1,13 @@
 import Foundation
 
 /// Swappable terminal-focus backend so the rest of the app stays terminal-agnostic (spec.md §8). Each
-/// supported terminal app (Ghostty, iTerm2, …) gets its own file conforming to this protocol; adding one
-/// more terminal is a new file plus one line in `CompositeTerminalController`, never a change to any
+/// supported terminal app (Ghostty, iTerm2, cmux, …) gets its own file conforming to this protocol; adding
+/// one more terminal is a new file plus one line in `CompositeTerminalController`, never a change to any
 /// caller or to the other terminals' files.
 @MainActor
 protocol TerminalController: AnyObject {
-    /// User-facing name of this backend, e.g. "Ghostty" or "iTerm2" — shown in the info panel so the user
-    /// can tell which terminal a session's tab was found in.
+    /// User-facing name of this backend, e.g. "Ghostty", "iTerm2", or "cmux" — shown in the info panel so
+    /// the user can tell which terminal a session's tab was found in.
     var displayName: String { get }
     /// App-level availability: the terminal app is running and Automation is authorized. Must be a cheap,
     /// non-blocking read — see `refreshAvailability()` for why.
