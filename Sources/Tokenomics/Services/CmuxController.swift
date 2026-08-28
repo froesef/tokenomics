@@ -341,6 +341,15 @@ final class CmuxController: TerminalController {
     /// see this file's top doc comment for the marker-file test that confirmed it actually submits the
     /// pasted line rather than just landing another literal newline in the input buffer.
     ///
+    /// The `delay 0.3` between `input text` and `perform action` is load-bearing, not decoration: `input
+    /// text`'s Apple Event reply comes back — confirmed via `NSAppleScript` (not just `osascript`, which
+    /// has enough inherent process-launch latency to mask this) — before cmux has actually finished writing
+    /// the pasted bytes into the terminal. Fire `perform action "text:\n"` immediately after and it
+    /// reliably submits an empty/partial line instead of the pasted text: reproduced with a marker-file
+    /// test (paste `touch marker`, immediately send the enter-action, marker never appears) and fixed by
+    /// inserting this delay (marker reliably appears across repeated runs). No such race exists for
+    /// Ghostty's `send key "enter"`, which is why `GhosttyController` needs no equivalent delay.
+    ///
     /// Deliberately skips both `focus targetTerminal` and window activation: `input text` and `perform
     /// action` both take `targetTerminal` explicitly, so neither needs the terminal selected or the window
     /// frontmost to work. This is the unattended path (see the protocol doc comment on
@@ -351,6 +360,7 @@ final class CmuxController: TerminalController {
         let escapedText = Self.escape(text)
         let body = """
         input text "\(escapedText)" to targetTerminal
+        delay 0.3
         perform action "text:\\n" on targetTerminal
         """
         let (resolvedId, error) = await Self.runMatchAndAct(cachedTerminalId: resolvedTerminalIds[sessionId], workingDirectory: workingDirectory, aiTitle: aiTitle, bodyIfFound: body, activate: false)
