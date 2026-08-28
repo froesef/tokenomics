@@ -1,14 +1,14 @@
 import Foundation
 
-/// Fans the `TerminalController` protocol out across every installed terminal backend (Ghostty, iTerm2, …
-/// see spec.md §8) so the rest of the app talks to "the terminal" without knowing which app is actually
-/// running. Adding a new terminal is one new file conforming to `TerminalController` plus one line in the
-/// default `controllers` list below — never a change to `SessionListViewModel` or any view.
+/// Fans the `TerminalController` protocol out across every installed terminal backend (Ghostty, iTerm2,
+/// cmux, … see spec.md §8) so the rest of the app talks to "the terminal" without knowing which app is
+/// actually running. Adding a new terminal is one new file conforming to `TerminalController` plus one line
+/// in the default `controllers` list below — never a change to `SessionListViewModel` or any view.
 @MainActor
 final class CompositeTerminalController: TerminalController {
     private let controllers: [TerminalController]
 
-    init(controllers: [TerminalController] = [GhosttyController(), ITermController()]) {
+    init(controllers: [TerminalController] = [GhosttyController(), ITermController(), CmuxController()]) {
         self.controllers = controllers
     }
 
