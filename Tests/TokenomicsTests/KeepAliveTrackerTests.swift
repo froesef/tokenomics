@@ -2,20 +2,18 @@ import Foundation
 import XCTest
 @testable import Tokenomics
 
-@MainActor
 final class KeepAliveTrackerTests: XCTestCase {
     private let ttl: TimeInterval = 300
 
-    override func setUp() async throws {
-        try await super.setUp()
-        // These tests only read/write in-memory KeepAliveTracker state, but shouldFire/maxPings also
-        // read SettingsStore.shared — pin the fields they consult so results don't depend on whatever a
-        // previous run (or the real app) last persisted to UserDefaults.
-        await MainActor.run {
-            SettingsStore.shared.keepAliveLeadSeconds = 30
-            SettingsStore.shared.keepAliveMaxPings5m = 10
-            SettingsStore.shared.keepAliveMaxPings60m = 3
-        }
+    /// These tests only read/write in-memory KeepAliveTracker state, but shouldFire/maxPings also read
+    /// SettingsStore.shared — pin the fields they consult so results don't depend on whatever a previous
+    /// run (or the real app) last persisted to UserDefaults. Called explicitly (not from `setUp()`)
+    /// since XCTestCase's async setUp override can't safely hop a non-Sendable XCTestCase across actors.
+    @MainActor
+    private func pinSettings() {
+        SettingsStore.shared.keepAliveLeadSeconds = 30
+        SettingsStore.shared.keepAliveMaxPings5m = 10
+        SettingsStore.shared.keepAliveMaxPings60m = 3
     }
 
     private func makeSession(
@@ -47,7 +45,9 @@ final class KeepAliveTrackerTests: XCTestCase {
         )
     }
 
+    @MainActor
     func testSetEnabledResetsPingBudget() {
+        pinSettings()
         let tracker = KeepAliveTracker()
         let now = Date()
         let session = makeSession(now: now, cacheTouchTime: now)
@@ -64,7 +64,9 @@ final class KeepAliveTrackerTests: XCTestCase {
 
     /// `keepAliveAllActiveSessions` must never override a session the user has already toggled
     /// themselves, on or off — see KeepAliveTracker.autoEnableIfNeeded.
+    @MainActor
     func testAutoEnableSkipsSessionUserAlreadyToggledOff() {
+        pinSettings()
         let tracker = KeepAliveTracker()
         let now = Date()
         let session = makeSession(now: now, cacheTouchTime: now)
@@ -76,7 +78,9 @@ final class KeepAliveTrackerTests: XCTestCase {
         XCTAssertFalse(tracker.info(for: session, settings: .shared).enabled)
     }
 
+    @MainActor
     func testAutoEnableTurnsOnAUntouchedSession() {
+        pinSettings()
         let tracker = KeepAliveTracker()
         let now = Date()
         let session = makeSession(now: now, cacheTouchTime: now)
@@ -87,7 +91,9 @@ final class KeepAliveTrackerTests: XCTestCase {
 
     /// While a fired ping is awaiting its answer, transcript growth that's just the prompt echo (no new
     /// assistant turn yet) must not be mistaken for the user coming back — the budget must stand.
+    @MainActor
     func testObserveTurnDoesNotResetBudgetWhileAwaitingOwnPingEcho() {
+        pinSettings()
         let tracker = KeepAliveTracker()
         let t0 = Date()
         var session = makeSession(now: t0, cacheTouchTime: t0)
@@ -106,7 +112,9 @@ final class KeepAliveTrackerTests: XCTestCase {
 
     /// Once the ping's actual answer (a fresh assistant turn) is observed, the in-flight flag clears and
     /// the session can fire again next time it's due — but the ping still counts toward the cap.
+    @MainActor
     func testObserveTurnClearsAwaitingOnceAssistantAnswerLands() {
+        pinSettings()
         let tracker = KeepAliveTracker()
         let t0 = Date()
         let session0 = makeSession(now: t0, cacheTouchTime: t0)
@@ -123,7 +131,9 @@ final class KeepAliveTrackerTests: XCTestCase {
 
     /// Real user activity (lastTurnTime advances while *not* mid-ping) resets the budget — the user is
     /// back, so the unattended assumption no longer holds.
+    @MainActor
     func testObserveTurnResetsBudgetOnRealUserActivity() {
+        pinSettings()
         let tracker = KeepAliveTracker()
         let t0 = Date()
         let session0 = makeSession(now: t0, cacheTouchTime: t0)
@@ -142,7 +152,9 @@ final class KeepAliveTrackerTests: XCTestCase {
         XCTAssertEqual(tracker.info(for: userReturned, settings: .shared).pingsUsed, 0)
     }
 
+    @MainActor
     func testShouldFireOnlyWithinLeadWindowAndBudget() {
+        pinSettings()
         let tracker = KeepAliveTracker()
         let now = Date()
         // 20s of runway left on a 300s TTL cache, lead time is 30s — inside the firing window.
@@ -162,7 +174,9 @@ final class KeepAliveTrackerTests: XCTestCase {
 
     /// A turn already in flight (`.running`/`.compacting`) will touch the cache on its own — pasting a
     /// ping on top would just queue uselessly behind it.
+    @MainActor
     func testShouldFireSkipsSessionsWithATurnInFlight() {
+        pinSettings()
         let tracker = KeepAliveTracker()
         let now = Date()
         let running = makeSession(now: now, cacheTouchTime: now.addingTimeInterval(-(ttl - 20)), activity: .running)
@@ -172,7 +186,9 @@ final class KeepAliveTrackerTests: XCTestCase {
 
     /// Fires exactly once per warm period once the ping budget is spent, and stays quiet until the
     /// budget resets.
+    @MainActor
     func testConsumeExhaustionWarningFiresOncePerWarmPeriod() {
+        pinSettings()
         let tracker = KeepAliveTracker()
         var now = Date()
         var session = makeSession(now: now, cacheTouchTime: now)
@@ -196,7 +212,9 @@ final class KeepAliveTrackerTests: XCTestCase {
 
     /// "Let Expire" disables keep-alive and suppresses further expiry banners for this session, until
     /// real user activity is observed again.
+    @MainActor
     func testRequestExpireDisablesAndSuppressesUntilUserReturns() {
+        pinSettings()
         let tracker = KeepAliveTracker()
         let t0 = Date()
         let session0 = makeSession(now: t0, cacheTouchTime: t0)
