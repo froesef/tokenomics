@@ -61,6 +61,17 @@ timestamp.
   quick-action buttons, timed to scale with how much there is to read and how long you've been away.
 - **Settings window** (menu-bar mode, refresh interval, expiring-soon threshold, notification lead time,
   terminal focus toggle, keep-alive caps), separate from the dropdown.
+- **Activity badge source: JSONL heuristics or Claude Code hooks (experimental)** — the transcript
+  heuristic needs no setup but relies on `system/turn_duration` to close an ordinary turn, an event some
+  non-interactive invocations (e.g. Agent-SDK-driven sessions) never emit, which can leave a row stuck
+  showing "running" indefinitely. Switching to hooks mode installs a handful of hook entries into
+  `~/.claude/settings.json` (backed up first — see HookInstaller) that report activity directly from
+  Claude Code's own lifecycle events instead. Hooks carry no token/cost/cache data at all (confirmed
+  against the official hooks reference), so cost, cache, and TTL figures always come from the transcript
+  regardless of this setting — only the idle/running/compacting/needs-input badge switches. A session with
+  no hook events yet (nothing fired since the setting was turned on) falls back to the JSONL-inferred
+  activity. See `Sources/Tokenomics/Services/HookInstaller.swift` and `HookActivityWatcher.swift` for the
+  exact hook list and the mapping from hook event to activity state.
 
 ## Build & run
 
@@ -139,6 +150,12 @@ it from Terminal to see it directly:
   `ITermController.swift`, and `CompositeTerminalController.swift` for the current (partial) mitigations.
 - **Ghostty splits may not work with auto keep-alive.** Keep-alive targets a tab; a session living in a
   split pane inside that tab may not get correctly detected/targeted, so keep-alive can silently miss it.
+- **The JSONL activity heuristic can get stuck on "running" for non-interactive sessions.** It closes an
+  ordinary turn on `system/turn_duration`, which at least some Agent-SDK-driven sessions never write to
+  their transcript at all (confirmed on a real transcript: zero `turn_duration` lines across 1,451 events,
+  vs. dozens in ordinary interactive sessions from the same machine) — once such a session's first turn
+  opens, nothing in the JSONL heuristic ever closes it again. Switch that session's activity source to
+  "Claude Code hooks" in Settings (see Features, above) to get a real signal instead.
 
 ## Documentation
 

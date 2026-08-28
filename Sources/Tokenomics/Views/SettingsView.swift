@@ -44,6 +44,28 @@ struct SettingsView: View {
                 }
             }
 
+            Section("Activity Detection (Experimental)") {
+                Label {
+                    Text("Hooks mode adds entries to ~/.claude/settings.json (a backup is written first) so every Claude Code session, in every project, reports its activity here. Cost, cache, and token figures always come from the transcript regardless of this setting — hook payloads carry none of that data.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                }
+
+                Picker(selection: $settings.activitySource) {
+                    Text("Transcript heuristics (JSONL)").tag(ActivitySource.jsonl)
+                    Text("Claude Code hooks").tag(ActivitySource.hooks)
+                } label: {
+                    SettingLabel(
+                        title: "Idle / running badge source",
+                        description: "JSONL heuristics need no setup but can get stuck on \"running\" for sessions that never emit a turn-closing event (e.g. some Agent-SDK-driven sessions). Hooks fire on real Claude Code lifecycle events instead, but only cover sessions that have had at least one turn since this was turned on — earlier sessions fall back to the JSONL heuristic."
+                    )
+                }
+                .pickerStyle(.menu)
+            }
+
             Section("Menu Bar") {
                 Picker(selection: $settings.menuBarMode) {
                     Text("Next expiry countdown").tag(MenuBarMode.nextExpiry)

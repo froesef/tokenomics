@@ -12,6 +12,25 @@ enum MenuBarMode: String, CaseIterable {
     case lostToday
 }
 
+/// How a session's idle/running/compacting/needs-input badge is computed. See HookActivityWatcher and
+/// TranscriptWatcher.updateActivity's doc comments for what each mode can and can't see — most notably,
+/// hooks carry zero token/cost/cache data (confirmed against the official hooks reference), so cost/cache/
+/// TTL accounting always comes from the transcript regardless of which mode is selected here; only the
+/// activity badge itself switches.
+enum ActivitySource: String, CaseIterable {
+    /// Infer activity from transcript event order (TranscriptWatcher.updateActivity). Works for every
+    /// session with no setup, but relies on `system/turn_duration` to close an ordinary turn — an event
+    /// that's absent in at least some non-interactive invocations (e.g. Agent-SDK-driven sessions,
+    /// confirmed by inspecting a real transcript with zero `turn_duration` lines across 1,451 events), so
+    /// those sessions can get stuck showing "running" indefinitely.
+    case jsonl
+    /// Read activity from Claude Code hooks (HookInstaller/HookActivityWatcher) instead. Needs hook entries
+    /// installed in `~/.claude/settings.json` (done automatically when this mode is selected — see
+    /// HookInstaller) and only reports state for sessions that have fired at least one hook event since
+    /// install; a session with no hook data yet falls back to the JSONL-inferred activity.
+    case hooks
+}
+
 @MainActor
 final class SettingsStore: ObservableObject {
     static let shared = SettingsStore()
@@ -65,6 +84,13 @@ final class SettingsStore: ObservableObject {
         didSet { UserDefaults.standard.set(menuBarMode.rawValue, forKey: Keys.menuBarMode) }
     }
 
+    /// Feature flag for the activity badge's data source — see ActivitySource. Switching this is what
+    /// drives HookInstaller.install()/uninstall() (see SessionListViewModel's `$activitySource` sink), not
+    /// this store itself: SettingsStore only persists the choice.
+    @Published var activitySource: ActivitySource {
+        didSet { UserDefaults.standard.set(activitySource.rawValue, forKey: Keys.activitySource) }
+    }
+
     /// Fallback TTL used only when a session has no per-turn `detectedTTL` yet (see
     /// `Session.effectiveTTL`) — e.g. before its first cache-writing turn. Not a user-facing setting: the
     /// real TTL is a property of how Claude Code was launched (`ENABLE_PROMPT_CACHING_1H`), not something
@@ -85,6 +111,7 @@ final class SettingsStore: ObservableObject {
         static let keepAliveLeadSeconds = "keepAliveLeadSeconds"
         static let keepAliveAllActiveSessions = "keepAliveAllActiveSessions"
         static let menuBarMode = "menuBarMode"
+        static let activitySource = "activitySource"
     }
 
     private init() {
@@ -99,5 +126,6 @@ final class SettingsStore: ObservableObject {
         keepAliveLeadSeconds = (d.object(forKey: Keys.keepAliveLeadSeconds) as? Double) ?? 30
         keepAliveAllActiveSessions = (d.object(forKey: Keys.keepAliveAllActiveSessions) as? Bool) ?? false
         menuBarMode = (d.string(forKey: Keys.menuBarMode)).flatMap(MenuBarMode.init(rawValue:)) ?? .nextExpiry
+        activitySource = (d.string(forKey: Keys.activitySource)).flatMap(ActivitySource.init(rawValue:)) ?? .jsonl
     }
 }
