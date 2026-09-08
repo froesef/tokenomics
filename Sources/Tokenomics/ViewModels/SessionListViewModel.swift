@@ -23,6 +23,7 @@ final class SessionListViewModel: ObservableObject {
 
     private let watcher: TranscriptWatcher
     private let codexWatcher: CodexSessionWatcher
+    private let copilotWatcher: CopilotSessionWatcher
     private let hookWatcher = HookActivityWatcher()
     /// Set when HookInstaller.install()/uninstall() throws (e.g. `~/.claude/settings.json` exists but isn't
     /// valid JSON) — surfaced via `dependencyWarnings` like every other degraded-but-not-fatal condition.
@@ -72,6 +73,7 @@ final class SessionListViewModel: ObservableObject {
         self.terminal = terminal
         self.watcher = TranscriptWatcher()
         self.codexWatcher = CodexSessionWatcher()
+        self.copilotWatcher = CopilotSessionWatcher()
 
         notifications.requestAuthorizationIfNeeded()
 
@@ -83,6 +85,10 @@ final class SessionListViewModel: ObservableObject {
             Task { await self?.rescan() }
         }
         codexWatcher.startWatching()
+        copilotWatcher.onChange = { [weak self] in
+            Task { await self?.rescan() }
+        }
+        copilotWatcher.startWatching()
         hookWatcher.onChange = { [weak self] in
             Task { await self?.rescan() }
         }
@@ -211,7 +217,8 @@ final class SessionListViewModel: ObservableObject {
     func rescan() async {
         let claudeScanned = watcher.scanAll()
         let codexScanned = codexWatcher.scanAll()
-        var scanned = claudeScanned + codexScanned
+        let copilotScanned = copilotWatcher.scanAll()
+        var scanned = claudeScanned + codexScanned + copilotScanned
         applyHookActivityOverlay(to: &scanned)
         await usage.refresh()
 
@@ -238,7 +245,7 @@ final class SessionListViewModel: ObservableObject {
         // is worse than the stale-but-visible status it replaces.
         let anyProcessDetected = withCost.contains { $0.agentKind == .claudeCode && $0.isProcessRunning }
         if anyProcessDetected {
-            let codexSessions = withCost.filter { $0.agentKind == .codex }
+            let nonClaudeSessions = withCost.filter { $0.agentKind != .claudeCode }
             var claudeSessions = withCost.filter { $0.agentKind == .claudeCode && $0.isProcessRunning }
 
             // A live PID can't be attributed to a specific transcript (ProcessMatcher matches by working
@@ -257,7 +264,7 @@ final class SessionListViewModel: ObservableObject {
                 guard group.count > liveCount else { return group }
                 return Array(group.sorted { $0.lastTurnTime > $1.lastTurnTime }.prefix(liveCount))
             }
-            withCost = claudeSessions + codexSessions
+            withCost = claudeSessions + nonClaudeSessions
         }
 
         let ttlFallback = settings.ttl
@@ -298,6 +305,9 @@ final class SessionListViewModel: ObservableObject {
         }
         if await usage.isAvailable == false {
             warnings.append(await usage.unavailableReason ?? "ccusage unavailable")
+        }
+        if let reason = copilotWatcher.unavailableReason {
+            warnings.append(reason)
         }
         if settings.terminalFocusEnabled && !terminal.isAvailable {
             warnings.append("No supported terminal (Ghostty, iTerm2) running or automation not authorized — focus action disabled")

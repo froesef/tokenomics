@@ -109,7 +109,15 @@ struct SessionDetailPanelView: View {
             if let ratio = session.cacheHitRatio {
                 infoRow(session.agentKind == .codex ? "Cached input" : "Hit ratio", String(format: "%.0f%%", ratio * 100))
             }
-            if let cost = session.cost {
+            if session.agentKind == .githubCopilot {
+                infoRow(
+                    "Est. AI credits",
+                    session.estimatedAICredits.map { String(format: "~%.2f estimated", $0) } ?? "estimate unavailable"
+                )
+                if session.estimatedAICredits != nil {
+                    infoRow("Rate catalog", CopilotPricing.ratesAsOf)
+                }
+            } else if let cost = session.cost {
                 infoRow("Cost", String(format: "$%.2f", cost))
             }
             if session.agentKind == .claudeCode {
@@ -143,6 +151,25 @@ struct SessionDetailPanelView: View {
             }
             if let reasoning = session.reasoningOutputTokens {
                 infoRow("Reasoning output", "\(reasoning)")
+            }
+        } else if session.agentKind == .githubCopilot {
+            if let input = session.totalInputTokens {
+                infoRow("Input tokens", "\(input)")
+            }
+            if let cached = session.cachedInputTokens {
+                infoRow("Cache read", "\(cached)")
+            }
+            if let cacheWrite = session.cacheWriteTokens {
+                infoRow("Cache write", "\(cacheWrite)")
+            }
+            if let output = session.outputTokens {
+                infoRow("Output tokens", "\(output)")
+            }
+            if let reasoning = session.reasoningOutputTokens {
+                infoRow("Reasoning tokens", "\(reasoning)")
+            }
+            if let duration = session.latestRequestDurationMS {
+                infoRow("Last request", "\(duration) ms")
             }
         } else {
             infoRow("Cache", "\(session.cacheCreationTokens) created / \(session.cacheReadTokens) read")
@@ -250,7 +277,7 @@ struct SessionDetailPanelView: View {
         VStack(alignment: .leading, spacing: 0) {
             if session.agentKind == .codex {
                 actionRow("Open in Codex", isHovering: $hoveringOpenCodex, isEnabled: session.codexThreadURL != nil, action: onOpenInCodex)
-            } else {
+            } else if session.agentKind == .claudeCode {
                 actionRow("Focus Tab", isHovering: $hoveringFocus, action: onFocus)
                 actionRow("Paste /handoff", isHovering: $hoveringHandoff, isEnabled: hasOpenTab && !isSessionBusy) { onPasteCommand("/handoff") }
                 actionRow("Paste /compact", isHovering: $hoveringCompact, isEnabled: hasOpenTab && !isSessionBusy) { onPasteCommand("/compact") }

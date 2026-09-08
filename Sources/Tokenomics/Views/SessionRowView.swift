@@ -33,7 +33,9 @@ struct SessionRowView: View {
     private var status: CacheStatus {
         session.status(now: now, ttl: ttl, expiringSoonThreshold: settings.expiringSoonThresholdSeconds)
     }
+    private var isClaudeCode: Bool { session.agentKind == .claudeCode }
     private var canOpenInCodex: Bool { session.agentKind == .codex && session.codexThreadURL != nil }
+    private var canFocusTerminal: Bool { isClaudeCode && hasOpenTab }
 
     /// Native menus paint every row's text solid white the moment it's the highlighted (blue) row,
     /// regardless of that text's usual hierarchy — no dimmed "secondary" tone survives the highlight.
@@ -95,7 +97,7 @@ struct SessionRowView: View {
                 .font(.system(size: 12, design: .monospaced))
                 .foregroundStyle(fg(.primary))
 
-            if hasOpenTab || canOpenInCodex {
+            if canFocusTerminal || canOpenInCodex {
                 Image(systemName: canOpenInCodex ? "arrow.up.forward.app" : "arrow.forward.circle")
                     .foregroundStyle(fg(.secondary))
             }
@@ -111,14 +113,14 @@ struct SessionRowView: View {
         .onTapGesture(count: 2) {
             if canOpenInCodex {
                 onOpenInCodex()
-            } else if hasOpenTab {
+            } else if canFocusTerminal {
                 onFocus()
             }
         }
         .contextMenu {
             if canOpenInCodex {
                 Button("Open in Codex", action: onOpenInCodex)
-            } else {
+            } else if isClaudeCode {
                 Button("Focus Tab", action: onFocus)
                     .disabled(!hasOpenTab)
                 Divider()
@@ -229,9 +231,16 @@ struct SessionRowView: View {
     }
 
     private var costText: String {
-        guard session.agentKind == .claudeCode else { return "" }
-        guard let cost = session.cost else { return "—" }
-        return String(format: "$%.2f", cost)
+        switch session.agentKind {
+        case .claudeCode:
+            guard let cost = session.cost else { return "—" }
+            return String(format: "$%.2f", cost)
+        case .githubCopilot:
+            guard let credits = session.estimatedAICredits else { return "—" }
+            return String(format: "~%.2f AI cr", credits)
+        case .codex:
+            return ""
+        }
     }
 
     private var ageText: String {
