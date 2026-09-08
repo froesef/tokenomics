@@ -125,7 +125,9 @@ final class CopilotSessionStore {
 
         switch validateSchema(database) {
         case let .success(fingerprint):
-            return readUsageEvents(from: database).map { CopilotStoreSnapshot(schemaFingerprint: fingerprint, events: $0) }
+            return readUsageEvents(from: database).map {
+                CopilotStoreSnapshot(schemaFingerprint: fingerprint, events: $0)
+            }
         case let .failure(error):
             return .failure(error)
         }
@@ -139,7 +141,9 @@ final class CopilotSessionStore {
                 guard !columns.isEmpty else {
                     return .failure(.tableMissing(table))
                 }
-                if let missingColumn = Self.requiredColumns[table, default: []].first(where: { !columns.contains($0) }) {
+                if let missingColumn = Self.requiredColumns[table, default: []]
+                    .first(where: { !columns.contains($0) })
+                {
                     return .failure(.columnMissing(table: table, column: missingColumn))
                 }
                 fingerprintParts.append("\(table):\(columns.sorted().joined(separator: ","))")

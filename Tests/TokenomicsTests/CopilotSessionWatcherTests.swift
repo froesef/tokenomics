@@ -4,6 +4,19 @@ import XCTest
 @testable import Tokenomics
 
 final class CopilotSessionWatcherTests: XCTestCase {
+    private struct FixtureEvent {
+        let id: Int
+        let model: String
+        let inputTokens: Int
+        let cacheWriteTokens: Int
+        let cacheReadTokens: Int
+        let outputTokens: Int
+        let reasoningTokens: Int
+        let durationMS: Int
+        let reasoningEffort: String?
+        let createdAt: String
+    }
+
     @MainActor
     func testScanAllAggregatesRecentEventsBySession() throws {
         let home = try makeStore()
@@ -14,8 +27,16 @@ final class CopilotSessionWatcherTests: XCTestCase {
             sessionID: "session-1",
             cwd: "/tmp/project",
             events: [
-                (1, "gpt-5.6-luna", 100, 20, 10, 5, 2, 100, "low", "2027-01-15T08:00:00.000Z"),
-                (2, "gpt-5.6-terra", 200, 40, 30, 15, 4, 200, "high", "2027-01-15T08:01:00.000Z")
+                FixtureEvent(
+                    id: 1, model: "gpt-5.6-luna", inputTokens: 100, cacheWriteTokens: 10,
+                    cacheReadTokens: 20, outputTokens: 5, reasoningTokens: 2, durationMS: 100,
+                    reasoningEffort: "low", createdAt: "2027-01-15T08:00:00.000Z"
+                ),
+                FixtureEvent(
+                    id: 2, model: "gpt-5.6-terra", inputTokens: 200, cacheWriteTokens: 30,
+                    cacheReadTokens: 40, outputTokens: 15, reasoningTokens: 4, durationMS: 200,
+                    reasoningEffort: "high", createdAt: "2027-01-15T08:01:00.000Z"
+                )
             ]
         )
 
@@ -46,13 +67,25 @@ final class CopilotSessionWatcherTests: XCTestCase {
             into: home,
             sessionID: "old",
             cwd: "/tmp/old",
-            events: [(1, "gpt-5.6-sol", 1, 0, 0, 1, 0, 1, nil, "2026-01-01T00:00:00.000Z")]
+            events: [
+                FixtureEvent(
+                    id: 1, model: "gpt-5.6-sol", inputTokens: 1, cacheWriteTokens: 0,
+                    cacheReadTokens: 0, outputTokens: 1, reasoningTokens: 0, durationMS: 1,
+                    reasoningEffort: nil, createdAt: "2026-01-01T00:00:00.000Z"
+                )
+            ]
         )
         try insert(
             into: home,
             sessionID: "no-cwd",
             cwd: nil,
-            events: [(2, "gpt-5.6-sol", 1, 0, 0, 1, 0, 1, nil, "2027-01-15T08:00:00.000Z")]
+            events: [
+                FixtureEvent(
+                    id: 2, model: "gpt-5.6-sol", inputTokens: 1, cacheWriteTokens: 0,
+                    cacheReadTokens: 0, outputTokens: 1, reasoningTokens: 0, durationMS: 1,
+                    reasoningEffort: nil, createdAt: "2027-01-15T08:00:00.000Z"
+                )
+            ]
         )
 
         let sessions = CopilotSessionWatcher(copilotHome: home).scanAll(now: Date(timeIntervalSince1970: 1_800_000_000))
@@ -99,7 +132,7 @@ final class CopilotSessionWatcherTests: XCTestCase {
         into home: URL,
         sessionID: String,
         cwd: String?,
-        events: [(Int, String, Int, Int, Int, Int, Int, Int, String?, String)]
+        events: [FixtureEvent]
     ) throws {
         var database: OpaquePointer?
         XCTAssertEqual(sqlite3_open(home.appendingPathComponent("session-store.db").path, &database), SQLITE_OK)
@@ -107,7 +140,7 @@ final class CopilotSessionWatcherTests: XCTestCase {
         let escapedCWD = cwd.map { "'\($0)'" } ?? "NULL"
         try execute("INSERT INTO sessions (id, cwd) VALUES ('\(sessionID)', \(escapedCWD));", database: database)
         for event in events {
-            let effort = event.8.map { "'\($0)'" } ?? "NULL"
+            let effort = event.reasoningEffort.map { "'\($0)'" } ?? "NULL"
             try execute(
                 """
                 INSERT INTO assistant_usage_events (
@@ -115,8 +148,9 @@ final class CopilotSessionWatcherTests: XCTestCase {
                     cache_read_tokens, cache_write_tokens, reasoning_tokens, duration_ms,
                     reasoning_effort, created_at
                 ) VALUES (
-                    \(event.0), '\(sessionID)', \(event.0), '\(event.1)', \(event.2), \(event.5),
-                    \(event.3), \(event.4), \(event.6), \(event.7), \(effort), '\(event.9)'
+                    \(event.id), '\(sessionID)', \(event.id), '\(event.model)', \(event.inputTokens), \(event.outputTokens),
+                    \(event.cacheReadTokens), \(event.cacheWriteTokens), \(event.reasoningTokens), \(event.durationMS),
+                    \(effort), '\(event.createdAt)'
                 );
                 """,
                 database: database
