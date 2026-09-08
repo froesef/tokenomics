@@ -3,6 +3,7 @@ import SwiftUI
 enum AgentIconStyle: Equatable, Sendable {
     case sunburst
     case chatGPTKnot
+    case sparkles
 }
 
 private extension AgentKind {
@@ -15,6 +16,8 @@ private extension AgentKind {
             return Color(red: 0.80, green: 0.47, blue: 0.34)
         case .codex:
             return Color(red: 0.12, green: 0.50, blue: 0.44)
+        case .githubCopilot:
+            return Color(red: 0.31, green: 0.39, blue: 0.85)
         }
     }
 }
@@ -24,6 +27,7 @@ extension AgentKind {
         switch self {
         case .claudeCode: return .sunburst
         case .codex: return .chatGPTKnot
+        case .githubCopilot: return .sparkles
         }
     }
 }
@@ -43,6 +47,11 @@ struct AgentIcon: View {
                     .fill(kind.tint)
             case .chatGPTKnot:
                 ChatGPTKnotMark(tint: kind.tint, size: size)
+            case .sparkles:
+                Image(systemName: "sparkles")
+                    .resizable()
+                    .scaledToFit()
+                    .foregroundStyle(kind.tint)
             }
         }
         .frame(width: size, height: size)

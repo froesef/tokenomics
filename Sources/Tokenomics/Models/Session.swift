@@ -3,11 +3,13 @@ import Foundation
 enum AgentKind: Equatable, Sendable {
     case claudeCode
     case codex
+    case githubCopilot
 
     var displayName: String {
         switch self {
         case .claudeCode: return "Claude Code"
         case .codex: return "Codex"
+        case .githubCopilot: return "GitHub Copilot"
         }
     }
 }
@@ -101,8 +103,13 @@ struct Session: Identifiable, Equatable, Sendable {
     /// nil because their transcript exposes cache-write/cache-read counters instead.
     let totalInputTokens: Int?
     let cachedInputTokens: Int?
+    /// Cache-write tokens reported by the Copilot local session store. Claude uses
+    /// `cacheCreationTokens`; Codex rollouts do not report this bucket.
+    var cacheWriteTokens: Int? = nil
     let outputTokens: Int?
     let reasoningOutputTokens: Int?
+    /// Duration of the latest Copilot usage event, when its local store reports it.
+    var latestRequestDurationMS: Int? = nil
     let toolUsage: ToolUsage
     /// Model id (e.g. "claude-sonnet-5") and reasoning-effort level (e.g. "high") from the most recent
     /// assistant turn — read straight from the transcript (`message.model` / top-level `effort` on each
@@ -221,6 +228,9 @@ struct Session: Identifiable, Equatable, Sendable {
     var hasBigContext: Bool { (currentContextTokens ?? 0) >= bigContextWarnTokens }
 
     var cost: Double?
+    /// A local token-rate calculation converted to GitHub AI credits. This is an
+    /// estimate, not account billing or an invoice amount.
+    var estimatedAICredits: Double? = nil
 
     /// Per-project token-savings stats from `rtk gain` (see RTKService), joined by working directory —
     /// nil until RTKService's own probe confirms `rtk` is actually installed on this machine.
@@ -257,6 +267,7 @@ struct Session: Identifiable, Equatable, Sendable {
             guard let totalInputTokens, totalInputTokens > 0 else { return nil }
             return Double(cachedInputTokens ?? 0) / Double(totalInputTokens)
         }
+        guard agentKind == .claudeCode else { return nil }
         let total = cacheCreationTokens + cacheReadTokens
         guard total > 0 else { return nil }
         return Double(cacheReadTokens) / Double(total)

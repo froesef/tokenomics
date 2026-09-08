@@ -10,8 +10,8 @@
 > zero savings. **Leave it off if you're on a subscription plan.**
 
 A macOS menu bar app that shows local coding-agent sessions: [Claude Code](https://code.claude.com)
-prompt-cache countdowns, costs, and cache-hit ratios, plus Codex cached-input token usage from local
-session rollouts.
+prompt-cache countdowns, costs, and cache-hit ratios; Codex cached-input usage from local session
+rollouts; and GitHub Copilot session token/cache usage from its local session store.
 
 Each project directory you run Claude Code in gets its own independent prompt cache with its own TTL.
 Once that cache goes cold, the next turn reprocesses the full context uncached — expensive, and easy to
@@ -19,9 +19,18 @@ miss if a session sits idle in a background tab. Tokenomics watches every sessio
 before that happens.
 
 Codex tracking is observe-only: Tokenomics reads local `~/.codex` JSONL session rollouts and shows model,
-last activity, token totals, and cached-input ratio. Codex rows do **not** show a prompt-cache expiry
-countdown, because Codex's local transcript exposes cached-token usage but not an exact cache-expiry
-timestamp.
+last activity, token totals, and cached-input ratio. GitHub Copilot tracking is also observe-only:
+Tokenomics reads allowlisted scalar metrics from `COPILOT_HOME/session-store.db` (or
+`~/.copilot/session-store.db`): session ID, timestamp, model, reasoning effort, input/output,
+cache-read/cache-write, reasoning-token, duration, and working directory. It never reads prompts,
+responses, summaries, tool output, session JSONL, configuration, credentials, or secret files. Neither
+Codex nor Copilot rows show a prompt-cache expiry countdown, because their local data does not expose an
+exact cache-expiry timestamp.
+
+For known Copilot models, Tokenomics calculates **estimated AI credits** from GitHub's published
+[per-token pricing](https://docs.github.com/en/copilot/reference/copilot-billing/models-and-pricing).
+This is a local estimate based on observed token buckets and the dated rate catalog shown in the detail
+panel; it is not account billing, included-credit usage, or an invoice total.
 
 ## Features
 
@@ -39,8 +48,10 @@ timestamp.
   panel offers a one-click `/compact`.
 - **Cost per session**, via [`ccusage`](https://github.com/ryoppippi/ccusage). **Cache-hit ratio per
   session**, computed directly from the transcript's own token counts — no `ccusage` involved.
-- **Codex session rows** — cached-input ratio, raw input/output/reasoning token totals, model, effort,
-  CLI version, and a safe "Open in Codex" action via the documented `codex://threads/<id>` deep link.
+- **Codex and Copilot session rows** — Codex shows cached-input ratio, raw input/output/reasoning token
+  totals, model, effort, CLI version, and a safe "Open in Codex" action via the documented
+  `codex://threads/<id>` deep link. Copilot shows raw input, cache-read, cache-write, output, reasoning,
+  duration, model, effort, and estimated AI credits from its local session store.
 - **Hover for full detail**: working directory, TTL source, last-turn time, raw token counts, model and
   reasoning effort, CLI version, whether a live `claude` process was actually found, and which tools /
   MCP plugins / Skills / hooks that session used.
@@ -55,8 +66,8 @@ timestamp.
   is cold there's no countdown left to show, so the bar falls back to whichever session is running,
   compacting, or waiting on you, rather than showing a bare, easy-to-miss timer icon.
 - **Click a row to focus the matching terminal tab (Ghostty, iTerm2, or cmux)** — only offered when a real matching tab exists.
-- **Right-click (or the hover panel) for `/handoff`, `/compact`, and a no-op "Ping"** — these paste into
-  Claude Code's terminal as if typed, never run automatically.
+- **Claude Code terminal actions** — right-click (or the hover panel) for `/handoff`, `/compact`, and a
+  no-op "Ping"; these paste into Claude Code's terminal as if typed, never run automatically.
 - **Warnings before a session goes cold**: a top-of-screen banner plus a system notification, with
   quick-action buttons, timed to scale with how much there is to read and how long you've been away.
 - **Settings window** (menu-bar mode, refresh interval, expiring-soon threshold, notification lead time,
